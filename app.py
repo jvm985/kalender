@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, send_file, io
+import io
+from flask import Flask, render_template, request, send_file
 import cairo
 import datetime
 import calendar
