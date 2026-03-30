@@ -13,34 +13,36 @@
             --shadow: 0 4px 15px rgba(0,0,0,0.1);
         }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--secondary); color: var(--text); margin: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
-        header { background: white; width: 100%; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; box-shadow: var(--shadow); box-sizing: border-box; }
-        .container { max-width: 1000px; width: 95%; margin: 2rem 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
-        @media (max-width: 768px) { .container { grid-template-columns: 1fr; } }
-        .card { background: white; padding: 2rem; border-radius: 12px; box-shadow: var(--shadow); }
-        h2 { margin-top: 0; color: var(--primary); border-bottom: 2px solid var(--secondary); padding-bottom: 0.5rem; }
-        .form-group { margin-bottom: 1.2rem; text-align: left; }
-        label { display: block; margin-bottom: 0.4rem; font-weight: bold; }
-        input[type="text"], input[type="number"], select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
-        .checkbox-group { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
-        .checkbox-item { display: flex; align-items: center; gap: 0.5rem; }
+        header { background: white; width: 100%; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; box-shadow: var(--shadow); box-sizing: border-box; z-index: 100; }
+        .main-layout { display: grid; grid-template-columns: 400px 1fr; gap: 2rem; width: 95%; max-width: 1400px; margin: 2rem 0; height: calc(100vh - 120px); }
+        @media (max-width: 1100px) { .main-layout { grid-template-columns: 1fr; height: auto; } }
+        .sidebar { display: flex; flex-direction: column; gap: 2rem; overflow-y: auto; padding-right: 10px; }
+        .preview-container { background: white; border-radius: 12px; box-shadow: var(--shadow); display: flex; flex-direction: column; position: relative; overflow: hidden; }
+        iframe { width: 100%; height: 100%; border: none; flex-grow: 1; }
+        .card { background: white; padding: 1.5rem; border-radius: 12px; box-shadow: var(--shadow); }
+        h2 { margin-top: 0; color: var(--primary); font-size: 1.2rem; border-bottom: 2px solid var(--secondary); padding-bottom: 0.5rem; }
+        .form-group { margin-bottom: 1rem; text-align: left; }
+        label { display: block; margin-bottom: 0.3rem; font-weight: bold; font-size: 0.9rem; }
+        input[type="text"], input[type="number"], select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
+        .checkbox-group { display: grid; grid-template-columns: 1fr; gap: 0.5rem; margin: 1rem 0; }
+        .checkbox-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
         button { background: var(--primary); color: white; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; font-size: 1rem; font-weight: bold; transition: opacity 0.2s; width: 100%; }
         button:hover { opacity: 0.9; }
-        .btn-logout { background: #eee; color: #666; width: auto; font-size: 0.9rem; padding: 8px 15px; }
-        .btn-delete { background: var(--accent); padding: 5px 10px; font-size: 0.8rem; width: auto; }
-        .birthday-list { list-style: none; padding: 0; max-height: 400px; overflow-y: auto; }
-        .birthday-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #eee; }
-        .birthday-item:last-child { border-bottom: none; }
-        .login-box { text-align: center; margin-top: 5rem; }
-        .login-btn { display: inline-block; background: white; border: 1px solid #ddd; padding: 12px 24px; border-radius: 30px; text-decoration: none; color: var(--text); font-weight: bold; box-shadow: var(--shadow); transition: transform 0.2s; }
-        .login-btn:hover { transform: translateY(-2px); }
+        .btn-print { background: #28a745; margin-top: 10px; }
+        .btn-logout { background: #eee; color: #666; width: auto; font-size: 0.8rem; padding: 5px 12px; }
+        .btn-delete { background: var(--accent); padding: 3px 8px; font-size: 0.7rem; width: auto; }
+        .birthday-list { list-style: none; padding: 0; margin: 0; }
+        .birthday-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+        .login-box { text-align: center; margin-top: 5rem; max-width: 400px; }
+        .login-btn { display: inline-block; background: white; border: 1px solid #ddd; padding: 12px 24px; border-radius: 30px; text-decoration: none; color: var(--text); font-weight: bold; box-shadow: var(--shadow); }
     </style>
 </head>
 <body>
     <header>
-        <div style="font-size: 1.5rem; font-weight: bold; color: var(--primary);">📅 Kalender Generator</div>
+        <div style="font-size: 1.3rem; font-weight: bold; color: var(--primary);">📅 Kalender Generator</div>
         {% if current_user.is_authenticated %}
             <div>
-                <span>Welkom, <strong>{{ current_user.name }}</strong></span>
+                <span style="font-size: 0.9rem; margin-right: 10px;">Welkom, <strong>{{ current_user.name }}</strong></span>
                 <a href="/logout"><button class="btn-logout">Uitloggen</button></a>
             </div>
         {% endif %}
@@ -49,78 +51,111 @@
     {% if not current_user.is_authenticated %}
         <div class="login-box card">
             <h2>Log in om te beginnen</h2>
-            <p>Beheer je eigen verjaardagen en personaliseer je kalender.</p>
+            <p>Personaliseer je kalender en beheer je eigen verjaardagen.</p>
             <a href="/login" class="login-btn">
                 <img src="https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_Color_Icon.svg" width="20" style="vertical-align: middle; margin-right: 10px;">
                 Log in met Google
             </a>
         </div>
     {% else %}
-        <div class="container">
-            <!-- Kalender Opties -->
-            <div class="card">
-                <h2>Kalender Genereren</h2>
-                <form action="/generate" method="POST">
-                    <div class="form-group">
-                        <label>Jaar</label>
-                        <input type="number" name="year" value="{{ year }}" min="1900" max="2100">
-                    </div>
-                    <div class="form-group">
-                        <label>Papierformaat</label>
-                        <select name="paper_size">
-                            <option value="A3" selected>A3 (Groot)</option>
-                            <option value="A4">A4 (Standaard)</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Oriëntatie</label>
-                        <select name="orientation">
-                            <option value="landscape" selected>Liggend (Landscape)</option>
-                            <option value="portrait">Staand (Portrait)</option>
-                        </select>
-                    </div>
-                    <div class="checkbox-group">
-                        <div class="checkbox-item">
-                            <input type="checkbox" name="show_birthdays" checked id="cb1">
-                            <label for="cb1">Mijn verjaardagen</label>
+        <div class="main-layout">
+            <div class="sidebar">
+                <!-- Kalender Opties -->
+                <div class="card">
+                    <h2>Opties</h2>
+                    <form id="optionsForm" action="/generate" method="POST">
+                        <div class="form-group">
+                            <label>Jaar</label>
+                            <input type="number" name="year" id="year" value="{{ year }}" min="1900" max="2100">
                         </div>
-                        <div class="checkbox-item">
-                            <input type="checkbox" name="show_holidays" checked id="cb2">
-                            <label for="cb2">Feestdagen (BE)</label>
+                        <div class="form-group">
+                            <label>Papierformaat</label>
+                            <select name="paper_size" id="paper_size">
+                                <option value="A3" selected>A3 (Groot)</option>
+                                <option value="A4">A4 (Standaard)</option>
+                            </select>
                         </div>
-                        <div class="checkbox-item">
-                            <input type="checkbox" name="show_vacations" checked id="cb3">
-                            <label for="cb3">Schoolvakanties (VL)</label>
+                        <div class="form-group">
+                            <label>Oriëntatie</label>
+                            <select name="orientation" id="orientation">
+                                <option value="landscape" selected>Liggend</option>
+                                <option value="portrait">Staand</option>
+                            </select>
                         </div>
-                    </div>
-                    <button type="submit">Download PDF</button>
-                </form>
+                        <div class="checkbox-group">
+                            <div class="checkbox-item">
+                                <input type="checkbox" name="show_birthdays" checked id="show_birthdays">
+                                <label for="show_birthdays">Mijn verjaardagen</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" name="show_holidays" checked id="show_holidays">
+                                <label for="show_holidays">Feestdagen (BE)</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" name="show_vacations" checked id="show_vacations">
+                                <label for="show_vacations">Schoolvakanties (VL)</label>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn-print">Downloaden & Afdrukken</button>
+                    </form>
+                </div>
+
+                <!-- Verjaardagen Beheer -->
+                <div class="card">
+                    <h2>Mijn Verjaardagen</h2>
+                    <form action="/birthday/add" method="POST" style="display: flex; gap: 5px; margin-bottom: 15px;">
+                        <input type="text" name="name" placeholder="Naam" required style="flex: 2;">
+                        <input type="number" name="day" placeholder="Dag" min="1" max="31" required style="flex: 1;">
+                        <input type="number" name="month" placeholder="Maand" min="1" max="12" required style="flex: 1;">
+                        <button type="submit" style="width: auto; padding: 8px 12px;">+</button>
+                    </form>
+                    
+                    <ul class="birthday-list">
+                        {% for b in user_birthdays %}
+                            <li class="birthday-item">
+                                <span><strong>{{ b.day }}/{{ b.month }}</strong> {{ b.name }}</span>
+                                <a href="/birthday/delete/{{ b.id }}"><button class="btn-delete">X</button></a>
+                            </li>
+                        {% else %}
+                            <li style="text-align: center; color: #999; padding: 10px;">Geen verjaardagen.</li>
+                        {% endfor %}
+                    </ul>
+                </div>
             </div>
 
-            <!-- Verjaardagen Beheer -->
-            <div class="card">
-                <h2>Mijn Verjaardagen</h2>
-                <form action="/birthday/add" method="POST" style="display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 5px; margin-bottom: 20px;">
-                    <input type="text" name="name" placeholder="Naam" required>
-                    <input type="number" name="day" placeholder="Dag" min="1" max="31" required>
-                    <input type="number" name="month" placeholder="Maand" min="1" max="12" required>
-                    <button type="submit" style="padding: 10px;">+</button>
-                </form>
-                
-                <ul class="birthday-list">
-                    {% for b in user_birthdays %}
-                        <li class="birthday-item">
-                            <div>
-                                <strong>{{ b.day }}/{{ b.month }}</strong> - {{ b.name }}
-                            </div>
-                            <a href="/birthday/delete/{{ b.id }}"><button class="btn-delete">Verwijder</button></a>
-                        </li>
-                    {% else %}
-                        <li style="text-align: center; color: #999; margin-top: 20px;">Nog geen verjaardagen toegevoegd.</li>
-                    {% endfor %}
-                </ul>
+            <!-- PDF Preview -->
+            <div class="preview-container">
+                <div style="padding: 10px; background: #eee; border-bottom: 1px solid #ddd; font-weight: bold; font-size: 0.8rem; display: flex; justify-content: space-between;">
+                    <span>VOORVERTONING</span>
+                    <span style="color: #666;">De preview wordt automatisch bijgewerkt</span>
+                </div>
+                <iframe id="pdfPreview" src=""></iframe>
             </div>
         </div>
+
+        <script>
+            const formElements = ['year', 'paper_size', 'orientation', 'show_birthdays', 'show_holidays', 'show_vacations'];
+            const previewIframe = document.getElementById('pdfPreview');
+
+            function updatePreview() {
+                const year = document.getElementById('year').value;
+                const size = document.getElementById('paper_size').value;
+                const orient = document.getElementById('orientation').value;
+                const bdays = document.getElementById('show_birthdays').checked;
+                const holidays = document.getElementById('show_holidays').checked;
+                const vacations = document.getElementById('show_vacations').checked;
+
+                const url = `/pdf_preview?year=${year}&paper_size=${size}&orientation=${orient}&show_birthdays=${bdays}&show_holidays=${holidays}&show_vacations=${vacations}&t=${new Date().getTime()}`;
+                previewIframe.src = url;
+            }
+
+            formElements.forEach(id => {
+                document.getElementById(id).addEventListener('change', updatePreview);
+            });
+
+            // Initial load
+            updatePreview();
+        </script>
     {% endif %}
 </body>
 </html>

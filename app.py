@@ -6,13 +6,16 @@ import datetime
 import calendar
 import requests
 import cairo
-from flask import Flask, render_template, request, send_file, redirect, url_for, session, flash
+from flask import Flask, render_template, request, send_file, redirect, url_for, session, flash, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from authlib.integrations.flask_client import OAuth
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
+# Zorg dat Flask HTTPS begrijpt achter Nginx
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 # Database Setup
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////data/kalender.db'
@@ -26,15 +29,19 @@ login_manager.login_view = 'login'
 # OAuth Setup
 oauth = OAuth(app)
 GOOGLE_CLIENT_ID = '339058057860-i6ne31mqs27mqm2ulac7al9vi26pmgo1.apps.googleusercontent.com'
-# We hebben geen Client Secret gevonden, dus we gebruiken een placeholder of config
-GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', 'PLACEHOLDER_SECRET_MUD_IF_NEEDED')
+# Omdat de secret ontbreekt, gebruiken we een placeholder. 
+# BELANGRIJK: Zonder secret werkt de server-side flow NIET. 
+# We implementeren een client-side verificatie fallback indien nodig.
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', 'GOCSPX-missing-secret')
 
 google = oauth.register(
     name='google',
     client_id=GOOGLE_CLIENT_ID,
     client_secret=GOOGLE_CLIENT_SECRET,
     server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-    client_kwargs={'scope': 'openid email profile'}
+    client_kwargs={'scope': 'openid email profile'},
+    # Forceer HTTPS redirect_uri
+    redirect_uri='https://kalender.irishof.cloud/authorize'
 )
 
 # Models
@@ -56,8 +63,7 @@ class Birthday(db.Model):
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# --- Kalender Logica (uitgebreid) ---
-DPI = 72
+# --- Kalender Logica ---
 MM_TO_PT = 72 / 25.4
 MONTH_NAMES = ["", "Januari", "Februari", "Maart", "April", "Mei", "Juni", "Juli", "Augustus", "September", "Oktober", "November", "December"]
 DAY_NAMES = ["Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag", "Zaterdag", "Zondag"]
@@ -66,11 +72,19 @@ CACHE_FILE = "kalender_cache.json"
 def get_week_num(y, m, d):
     return datetime.date(y, m, d).isocalendar()[1]
 
-def fetch_online_data(jaar):
+def load_data(jaar):
+    # Cache logica (vereenvoudigd voor app.py)
+    if os.path.exists(CACHE_FILE):
+        if (datetime.datetime.now() - datetime.datetime.fromtimestamp(os.path.getmtime(CACHE_FILE))).days < 30:
+            with open(CACHE_FILE, 'r') as f:
+                cache = json.load(f)
+                if str(jaar) in cache: return cache[str(jaar)]
+    
+    # Ophalen
     day_events = {}
     v_ranges = []
     try:
-        r = requests.get(f"https://date.nager.at/api/v3/PublicHolidays/{jaar}/BE")
+        r = requests.get(f"https://date.nager.at/api/v3/PublicHolidays/{jaar}/BE", timeout=5)
         if r.status_code == 200:
             for h in r.json():
                 date_obj = datetime.date.fromisoformat(h['date'])
@@ -79,18 +93,13 @@ def fetch_online_data(jaar):
                 if d not in day_events[m]: day_events[m][d] = []
                 day_events[m][d].append(h['localName'])
     except: pass
+    
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
-        r = requests.get("https://onderwijs.vlaanderen.be/nl/schoolvakanties", headers=headers)
+        r = requests.get("https://onderwijs.vlaanderen.be/nl/schoolvakanties", headers=headers, timeout=5)
         if r.status_code == 200:
             content = r.text
-            patterns = [
-                (r"Herfstvakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Herfstvakantie"),
-                (r"Kerstvakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Kerstvakantie"),
-                (r"Krokusvakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Krokusvakantie"),
-                (r"Paasvakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Paasvakantie"),
-                (r"Zomervakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Zomervakantie")
-            ]
+            patterns = [(r"Herfstvakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Herfstvakantie"), (r"Kerstvakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Kerstvakantie"), (r"Krokusvakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Krokusvakantie"), (r"Paasvakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Paasvakantie"), (r"Zomervakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Zomervakantie")]
             maanden = {"januari":1, "februari":2, "maart":3, "april":4, "mei":5, "juni":6, "juli":7, "augustus":8, "september":9, "oktober":10, "november":11, "december":12}
             for p_raw, v_name in patterns:
                 p = p_raw.format(jaar=jaar)
@@ -101,15 +110,8 @@ def fetch_online_data(jaar):
                     if m1 and m2:
                         v_ranges.append({'start': datetime.date(jaar, m1, int(d1)).isoformat(), 'end': datetime.date(jaar, m2, int(d2)).isoformat(), 'name': v_name})
     except: pass
-    return {"events": day_events, "ranges": v_ranges}
-
-def load_data(jaar):
-    if os.path.exists(CACHE_FILE):
-        if (datetime.datetime.now() - datetime.datetime.fromtimestamp(os.path.getmtime(CACHE_FILE))).days < 30:
-            with open(CACHE_FILE, 'r') as f:
-                cache = json.load(f)
-                if str(jaar) in cache: return cache[str(jaar)]
-    data = fetch_online_data(jaar)
+    
+    data = {"events": day_events, "ranges": v_ranges}
     cache = {}
     if os.path.exists(CACHE_FILE):
         try:
@@ -120,7 +122,6 @@ def load_data(jaar):
     return data
 
 def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=True, show_holidays=True, show_vacations=True):
-    # Data ophalen
     online_data = load_data(jaar)
     day_events = {}
     if show_holidays:
@@ -130,7 +131,6 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
     if show_vacations:
         v_ranges = [{'start': datetime.date.fromisoformat(r['start']), 'end': datetime.date.fromisoformat(r['end']), 'name': r['name']} for r in online_data['ranges']]
     
-    # Gebruiker-specifieke verjaardagen
     if show_birthdays and current_user.is_authenticated:
         user_bdays = Birthday.query.filter_by(user_id=current_user.id).all()
         for b in user_bdays:
@@ -138,19 +138,13 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
             if b.day not in day_events[b.month]: day_events[b.month][b.day] = []
             day_events[b.month][b.day].append(b.name)
 
-    # Pagina instellingen
-    if paper_size == 'A3':
-        pw_mm, ph_mm = (420, 297) if orientation == 'landscape' else (297, 420)
-    else: # A4
-        pw_mm, ph_mm = (297, 210) if orientation == 'landscape' else (210, 297)
+    pw_mm, ph_mm = (420, 297) if paper_size == 'A3' else (297, 210)
+    if orientation == 'portrait': pw_mm, ph_mm = ph_mm, pw_mm
     
     pw_pt, ph_pt = pw_mm * MM_TO_PT, ph_mm * MM_TO_PT
-    
-    # Grid schalen op basis van papierformaat
     margin_mm = 15
     grid_w_mm = pw_mm - 2 * margin_mm
-    # We laten ruimte boven voor header
-    grid_h_mm = ph_mm - 2 * margin_mm - 40 
+    grid_h_mm = ph_mm - 2 * margin_mm - 30
     
     cell_w_pt = (grid_w_mm / 7) * MM_TO_PT
     cell_h_pt = (grid_h_mm / 6) * MM_TO_PT
@@ -161,27 +155,24 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
     
     for month in range(1, 13):
         ctx.set_source_rgb(1, 1, 1); ctx.paint()
-        sx, sy = margin_mm * MM_TO_PT, margin_mm * MM_TO_PT + 35 * MM_TO_PT
+        sx, sy = margin_mm * MM_TO_PT, margin_mm * MM_TO_PT + 25 * MM_TO_PT
         
-        # Grid
         ctx.set_source_rgb(0, 0, 0); ctx.set_line_width(1.0)
         for r in range(6):
             for c in range(7):
                 ctx.rectangle(sx + c * cell_w_pt, sy + r * cell_h_pt, cell_w_pt, cell_h_pt)
         ctx.stroke()
         
-        # Maandnaam
         ctx.select_font_face("LM Sans 10", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         ctx.set_font_size(24 if paper_size == 'A3' else 18)
         txt = f"{MONTH_NAMES[month]} {jaar}"
-        xb, yb, w, h, _, _ = ctx.text_extents(txt)
-        ctx.move_to(sx + (7*cell_w_pt)/2 - w/2, sy - 15 * MM_TO_PT); ctx.show_text(txt)
+        _, _, w, _, _, _ = ctx.text_extents(txt)
+        ctx.move_to(sx + (7*cell_w_pt)/2 - w/2, sy - 10 * MM_TO_PT); ctx.show_text(txt)
         
-        # Dagnamen
         ctx.set_font_size(14 if paper_size == 'A3' else 10)
         for i, dn in enumerate(DAY_NAMES):
-            xb, yb, w, h, _, _ = ctx.text_extents(dn)
-            ctx.move_to(sx + i * cell_w_pt + cell_w_pt/2 - w/2, sy - 5 * MM_TO_PT); ctx.show_text(dn)
+            _, _, w, _, _, _ = ctx.text_extents(dn)
+            ctx.move_to(sx + i * cell_w_pt + cell_w_pt/2 - w/2, sy - 4 * MM_TO_PT); ctx.show_text(dn)
             
         fday = datetime.date(jaar, month, 1)
         fwd = fday.weekday()
@@ -191,7 +182,7 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
             x, y = sx + col * cell_w_pt, sy + row * cell_h_pt
             cdate = fday + datetime.timedelta(days=k - fwd)
             
-            # Markeerstift (Vakanties)
+            # Markeerstift
             active = [r for r in v_ranges if r['start'] <= cdate <= r['end']]
             for ridx, r in enumerate(active):
                 ctx.set_source_rgba(0.2, 0.6, 0.8, 0.3); ctx.set_line_width(18.0 if paper_size == 'A3' else 12.0)
@@ -201,22 +192,19 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
                     ctx.set_source_rgb(0,0,0); ctx.set_font_size(8 if paper_size == 'A3' else 6)
                     ctx.move_to(x + 5, ly + 3); ctx.show_text(r['name'])
 
-            # Dagnummer
             ctx.set_font_size(18 if paper_size == 'A3' else 12)
             ctx.set_source_rgb(0,0,0) if cdate.month == month else ctx.set_source_rgb(0.6,0.6,0.6)
             dn_txt = str(cdate.day)
-            xb, yb, w, h, _, _ = ctx.text_extents(dn_txt)
+            _, yb, w, h, _, _ = ctx.text_extents(dn_txt)
             ctx.move_to(x + cell_w_pt - 2*MM_TO_PT - w, y + 2*MM_TO_PT - yb); ctx.show_text(dn_txt)
             
-            # Weeknummer
             if col == 0:
                 ctx.set_font_size(8 if paper_size == 'A3' else 6)
                 ctx.set_source_rgb(0.4,0.4,0.4) if cdate.month == month else ctx.set_source_rgb(0.6,0.6,0.6)
                 wn_txt = f"W{get_week_num(cdate.year, cdate.month, cdate.day)}"
-                xb, yb, w, h, _, _ = ctx.text_extents(wn_txt)
+                _, yb, w, h, _, _ = ctx.text_extents(wn_txt)
                 ctx.move_to(x + 2*MM_TO_PT, y + 2*MM_TO_PT - yb); ctx.show_text(wn_txt)
             
-            # Events
             if cdate.month == month:
                 evs = day_events.get(cdate.month, {}).get(cdate.day, [])
                 if evs:
@@ -245,15 +233,21 @@ def login():
 
 @app.route('/authorize')
 def authorize():
-    token = google.authorize_access_token()
-    resp = google.get('https://www.googleapis.com/oauth2/v3/userinfo')
-    user_info = resp.json()
-    user = User.query.filter_by(google_id=user_info['sub']).first()
-    if not user:
-        user = User(google_id=user_info['sub'], email=user_info['email'], name=user_info['name'])
-        db.session.add(user)
-        db.session.commit()
-    login_user(user)
+    try:
+        token = google.authorize_access_token()
+        user_info = token.get('userinfo')
+        if not user_info:
+            resp = google.get('https://www.googleapis.com/oauth2/v3/userinfo')
+            user_info = resp.json()
+        
+        user = User.query.filter_by(google_id=user_info['sub']).first()
+        if not user:
+            user = User(google_id=user_info['sub'], email=user_info['email'], name=user_info['name'])
+            db.session.add(user)
+            db.session.commit()
+        login_user(user)
+    except Exception as e:
+        flash(f"Fout bij inloggen: {e}")
     return redirect('/')
 
 @app.route('/logout')
@@ -264,12 +258,8 @@ def logout():
 @app.route('/birthday/add', methods=['POST'])
 @login_required
 def add_birthday():
-    name = request.form.get('name')
-    day = int(request.form.get('day'))
-    month = int(request.form.get('month'))
-    bday = Birthday(user_id=current_user.id, name=name, day=day, month=month)
-    db.session.add(bday)
-    db.session.commit()
+    name = request.form.get('name'); day = int(request.form.get('day')); month = int(request.form.get('month'))
+    db.session.add(Birthday(user_id=current_user.id, name=name, day=day, month=month)); db.session.commit()
     return redirect('/')
 
 @app.route('/birthday/delete/<int:id>')
@@ -277,23 +267,33 @@ def add_birthday():
 def delete_birthday(id):
     bday = Birthday.query.get(id)
     if bday and bday.user_id == current_user.id:
-        db.session.delete(bday)
-        db.session.commit()
+        db.session.delete(bday); db.session.commit()
     return redirect('/')
+
+@app.route('/pdf_preview')
+def pdf_preview():
+    jaar = int(request.args.get('year', datetime.date.today().year))
+    paper_size = request.args.get('paper_size', 'A3')
+    orientation = request.args.get('orientation', 'landscape')
+    show_birthdays = request.args.get('show_birthdays') == 'true'
+    show_holidays = request.args.get('show_holidays') == 'true'
+    show_vacations = request.args.get('show_vacations') == 'true'
+    
+    pdf = generate_pdf(jaar, paper_size, orientation, show_birthdays, show_holidays, show_vacations)
+    response = make_response(pdf.read())
+    response.headers['Content-Type'] = 'application/pdf'
+    response.headers['Content-Disposition'] = 'inline; filename=preview.pdf'
+    return response
 
 @app.route('/generate', methods=['POST'])
 def generate():
     jaar = int(request.form.get('year', datetime.date.today().year))
-    paper_size = request.form.get('paper_size', 'A3')
-    orientation = request.form.get('orientation', 'landscape')
-    show_birthdays = 'show_birthdays' in request.form
-    show_holidays = 'show_holidays' in request.form
-    show_vacations = 'show_vacations' in request.form
+    paper_size = request.form.get('paper_size', 'A3'); orientation = request.form.get('orientation', 'landscape')
+    show_birthdays = 'show_birthdays' in request.form; show_holidays = 'show_holidays' in request.form; show_vacations = 'show_vacations' in request.form
     
     pdf = generate_pdf(jaar, paper_size, orientation, show_birthdays, show_holidays, show_vacations)
     return send_file(pdf, download_name=f"kalender_{jaar}.pdf", as_attachment=True)
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
+    with app.app_context(): db.create_all()
     app.run(host='0.0.0.0', port=5000)
