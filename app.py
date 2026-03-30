@@ -1,27 +1,64 @@
 import io
-from flask import Flask, render_template, request, send_file
-import cairo
+import os
+import re
+import json
 import datetime
 import calendar
-import json
-import os
 import requests
-import re
+import cairo
+from flask import Flask, render_template, request, send_file, redirect, url_for, session, flash
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from authlib.integrations.flask_client import OAuth
 
 app = Flask(__name__)
+app.secret_key = os.urandom(24)
 
-# Instellingen
+# Database Setup
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////data/kalender.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+# OAuth Setup
+oauth = OAuth(app)
+GOOGLE_CLIENT_ID = '339058057860-i6ne31mqs27mqm2ulac7al9vi26pmgo1.apps.googleusercontent.com'
+# We hebben geen Client Secret gevonden, dus we gebruiken een placeholder of config
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', 'PLACEHOLDER_SECRET_MUD_IF_NEEDED')
+
+google = oauth.register(
+    name='google',
+    client_id=GOOGLE_CLIENT_ID,
+    client_secret=GOOGLE_CLIENT_SECRET,
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    client_kwargs={'scope': 'openid email profile'}
+)
+
+# Models
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    google_id = db.Column(db.String(100), unique=True)
+    email = db.Column(db.String(100), unique=True)
+    name = db.Column(db.String(100))
+    birthdays = db.relationship('Birthday', backref='user', lazy=True)
+
+class Birthday(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    day = db.Column(db.Integer, nullable=False)
+    month = db.Column(db.Integer, nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+# --- Kalender Logica (uitgebreid) ---
 DPI = 72
 MM_TO_PT = 72 / 25.4
-A3_BREEDTE_MM = 420
-A3_HOOGTE_MM = 297
-PAGE_WIDTH = A3_BREEDTE_MM * MM_TO_PT
-PAGE_HEIGHT = A3_HOOGTE_MM * MM_TO_PT
-BREEDTE_CM = 5.5
-HOOGTE_CM = 4.3
-BREEDTE_PT = BREEDTE_CM * 10 * MM_TO_PT
-HOOGTE_PT = HOOGTE_CM * 10 * MM_TO_PT
-
 MONTH_NAMES = ["", "Januari", "Februari", "Maart", "April", "Mei", "Juni", "Juli", "Augustus", "September", "Oktober", "November", "December"]
 DAY_NAMES = ["Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag", "Zaterdag", "Zondag"]
 CACHE_FILE = "kalender_cache.json"
@@ -42,7 +79,6 @@ def fetch_online_data(jaar):
                 if d not in day_events[m]: day_events[m][d] = []
                 day_events[m][d].append(h['localName'])
     except: pass
-
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
         r = requests.get("https://onderwijs.vlaanderen.be/nl/schoolvakanties", headers=headers)
@@ -63,9 +99,7 @@ def fetch_online_data(jaar):
                     d1, m1_str, d2, m2_str, _ = m.groups()
                     m1, m2 = maanden.get(m1_str.lower()), maanden.get(m2_str.lower())
                     if m1 and m2:
-                        v_ranges.append({'start': datetime.date(jaar, m1, int(d1)).isoformat(), 
-                                         'end': datetime.date(jaar, m2, int(d2)).isoformat(), 
-                                         'name': v_name})
+                        v_ranges.append({'start': datetime.date(jaar, m1, int(d1)).isoformat(), 'end': datetime.date(jaar, m2, int(d2)).isoformat(), 'name': v_name})
     except: pass
     return {"events": day_events, "ranges": v_ranges}
 
@@ -85,112 +119,181 @@ def load_data(jaar):
     with open(CACHE_FILE, 'w') as f: json.dump(cache, f)
     return data
 
-def read_local_birthdays():
-    bdays = {}
-    if os.path.exists("verjaardagen.txt"):
-        with open("verjaardagen.txt", 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#'): continue
-                parts = line.split(maxsplit=1)
-                if len(parts) < 2: continue
-                try:
-                    d, m = map(int, parts[0].split('/'))
-                    if m not in bdays: bdays[m] = {}
-                    if d not in bdays[m]: bdays[m][d] = []
-                    bdays[m][d].append(parts[1])
-                except: continue
-    return bdays
-
-def generate_pdf(jaar):
+def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=True, show_holidays=True, show_vacations=True):
+    # Data ophalen
     online_data = load_data(jaar)
-    day_events = {int(m): {int(d): v for d, v in days.items()} for m, days in online_data['events'].items()}
-    v_ranges = [{'start': datetime.date.fromisoformat(r['start']), 'end': datetime.date.fromisoformat(r['end']), 'name': r['name']} for r in online_data['ranges']]
+    day_events = {}
+    if show_holidays:
+        day_events = {int(m): {int(d): v for d, v in days.items()} for m, days in online_data['events'].items()}
     
-    local_bdays = read_local_birthdays()
-    for m, days in local_bdays.items():
-        if m not in day_events: day_events[m] = {}
-        for d, names in days.items():
-            if d not in day_events[m]: day_events[m][d] = []
-            for n in names:
-                if n not in day_events[m][d]: day_events[m][d].append(n)
+    v_ranges = []
+    if show_vacations:
+        v_ranges = [{'start': datetime.date.fromisoformat(r['start']), 'end': datetime.date.fromisoformat(r['end']), 'name': r['name']} for r in online_data['ranges']]
+    
+    # Gebruiker-specifieke verjaardagen
+    if show_birthdays and current_user.is_authenticated:
+        user_bdays = Birthday.query.filter_by(user_id=current_user.id).all()
+        for b in user_bdays:
+            if b.month not in day_events: day_events[b.month] = {}
+            if b.day not in day_events[b.month]: day_events[b.month][b.day] = []
+            day_events[b.month][b.day].append(b.name)
 
+    # Pagina instellingen
+    if paper_size == 'A3':
+        pw_mm, ph_mm = (420, 297) if orientation == 'landscape' else (297, 420)
+    else: # A4
+        pw_mm, ph_mm = (297, 210) if orientation == 'landscape' else (210, 297)
+    
+    pw_pt, ph_pt = pw_mm * MM_TO_PT, ph_mm * MM_TO_PT
+    
+    # Grid schalen op basis van papierformaat
+    margin_mm = 15
+    grid_w_mm = pw_mm - 2 * margin_mm
+    # We laten ruimte boven voor header
+    grid_h_mm = ph_mm - 2 * margin_mm - 40 
+    
+    cell_w_pt = (grid_w_mm / 7) * MM_TO_PT
+    cell_h_pt = (grid_h_mm / 6) * MM_TO_PT
+    
     output = io.BytesIO()
-    surface = cairo.PDFSurface(output, PAGE_WIDTH, PAGE_HEIGHT)
+    surface = cairo.PDFSurface(output, pw_pt, ph_pt)
     ctx = cairo.Context(surface)
     
     for month in range(1, 13):
         ctx.set_source_rgb(1, 1, 1); ctx.paint()
-        gw, gh = 7 * BREEDTE_PT, 6 * HOOGTE_PT
-        sx, sy = (PAGE_WIDTH - gw) / 2, 100
+        sx, sy = margin_mm * MM_TO_PT, margin_mm * MM_TO_PT + 35 * MM_TO_PT
         
+        # Grid
         ctx.set_source_rgb(0, 0, 0); ctx.set_line_width(1.0)
         for r in range(6):
             for c in range(7):
-                ctx.rectangle(sx + c * BREEDTE_PT, sy + r * HOOGTE_PT, BREEDTE_PT, HOOGTE_PT)
+                ctx.rectangle(sx + c * cell_w_pt, sy + r * cell_h_pt, cell_w_pt, cell_h_pt)
         ctx.stroke()
         
+        # Maandnaam
         ctx.select_font_face("LM Sans 10", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        ctx.set_font_size(24)
+        ctx.set_font_size(24 if paper_size == 'A3' else 18)
         txt = f"{MONTH_NAMES[month]} {jaar}"
         xb, yb, w, h, _, _ = ctx.text_extents(txt)
-        ctx.move_to(sx + gw/2 - w/2, sy - 10 * MM_TO_PT); ctx.show_text(txt)
+        ctx.move_to(sx + (7*cell_w_pt)/2 - w/2, sy - 15 * MM_TO_PT); ctx.show_text(txt)
         
-        ctx.set_font_size(17.28)
+        # Dagnamen
+        ctx.set_font_size(14 if paper_size == 'A3' else 10)
         for i, dn in enumerate(DAY_NAMES):
             xb, yb, w, h, _, _ = ctx.text_extents(dn)
-            ctx.move_to(sx + i * BREEDTE_PT + BREEDTE_PT/2 - w/2, sy - 5 * MM_TO_PT); ctx.show_text(dn)
+            ctx.move_to(sx + i * cell_w_pt + cell_w_pt/2 - w/2, sy - 5 * MM_TO_PT); ctx.show_text(dn)
             
         fday = datetime.date(jaar, month, 1)
         fwd = fday.weekday()
         
         for k in range(42):
             col, row = k % 7, k // 7
-            x, y = sx + col * BREEDTE_PT, sy + row * HOOGTE_PT
+            x, y = sx + col * cell_w_pt, sy + row * cell_h_pt
             cdate = fday + datetime.timedelta(days=k - fwd)
             
-            # Markeerstift
+            # Markeerstift (Vakanties)
             active = [r for r in v_ranges if r['start'] <= cdate <= r['end']]
             for ridx, r in enumerate(active):
-                ctx.set_source_rgba(0.2, 0.6, 0.8, 0.3); ctx.set_line_width(20.0)
-                ly = y + 15 + (ridx * 22)
-                ctx.move_to(x, ly); ctx.line_to(x + BREEDTE_PT, ly); ctx.stroke()
+                ctx.set_source_rgba(0.2, 0.6, 0.8, 0.3); ctx.set_line_width(18.0 if paper_size == 'A3' else 12.0)
+                ly = y + (12 if paper_size == 'A3' else 8) + (ridx * (20 if paper_size == 'A3' else 14))
+                ctx.move_to(x, ly); ctx.line_to(x + cell_w_pt, ly); ctx.stroke()
                 if cdate == r['start']:
-                    ctx.set_source_rgb(0,0,0); ctx.set_font_size(8)
-                    ctx.move_to(x + 5, ly + 4); ctx.show_text(r['name'])
+                    ctx.set_source_rgb(0,0,0); ctx.set_font_size(8 if paper_size == 'A3' else 6)
+                    ctx.move_to(x + 5, ly + 3); ctx.show_text(r['name'])
 
-            ctx.set_font_size(20.74); ctx.set_source_rgb(0,0,0) if cdate.month == month else ctx.set_source_rgb(0.6,0.6,0.6)
+            # Dagnummer
+            ctx.set_font_size(18 if paper_size == 'A3' else 12)
+            ctx.set_source_rgb(0,0,0) if cdate.month == month else ctx.set_source_rgb(0.6,0.6,0.6)
             dn_txt = str(cdate.day)
             xb, yb, w, h, _, _ = ctx.text_extents(dn_txt)
-            ctx.move_to(x + BREEDTE_PT - 2*MM_TO_PT - w, y + 2*MM_TO_PT - yb); ctx.show_text(dn_txt)
+            ctx.move_to(x + cell_w_pt - 2*MM_TO_PT - w, y + 2*MM_TO_PT - yb); ctx.show_text(dn_txt)
             
+            # Weeknummer
             if col == 0:
-                ctx.set_font_size(9); ctx.set_source_rgb(0.4,0.4,0.4) if cdate.month == month else ctx.set_source_rgb(0.6,0.6,0.6)
+                ctx.set_font_size(8 if paper_size == 'A3' else 6)
+                ctx.set_source_rgb(0.4,0.4,0.4) if cdate.month == month else ctx.set_source_rgb(0.6,0.6,0.6)
                 wn_txt = f"W{get_week_num(cdate.year, cdate.month, cdate.day)}"
                 xb, yb, w, h, _, _ = ctx.text_extents(wn_txt)
                 ctx.move_to(x + 2*MM_TO_PT, y + 2*MM_TO_PT - yb); ctx.show_text(wn_txt)
             
+            # Events
             if cdate.month == month:
                 evs = day_events.get(cdate.month, {}).get(cdate.day, [])
                 if evs:
-                    ctx.set_source_rgb(0,0,0); ctx.set_font_size(10)
+                    ctx.set_source_rgb(0,0,0); ctx.set_font_size(9 if paper_size == 'A3' else 7)
                     for idx, name in enumerate(evs):
-                        ctx.move_to(x + 3*MM_TO_PT, y + 7*MM_TO_PT + idx * 11); ctx.show_text(name)
+                        ctx.move_to(x + 3*MM_TO_PT, y + 6*MM_TO_PT + idx * (11 if paper_size == 'A3' else 8)); ctx.show_text(name)
         ctx.show_page()
     ctx.show_page()
     surface.finish()
     output.seek(0)
     return output
 
+# --- Routes ---
+
 @app.route('/')
 def index():
-    return render_template('index.html', year=datetime.date.today().year)
+    user_birthdays = []
+    if current_user.is_authenticated:
+        user_birthdays = Birthday.query.filter_by(user_id=current_user.id).order_by(Birthday.month, Birthday.day).all()
+    return render_template('index.html', year=datetime.date.today().year, user_birthdays=user_birthdays)
+
+@app.route('/login')
+def login():
+    redirect_uri = url_for('authorize', _external=True)
+    return google.authorize_redirect(redirect_uri)
+
+@app.route('/authorize')
+def authorize():
+    token = google.authorize_access_token()
+    resp = google.get('https://www.googleapis.com/oauth2/v3/userinfo')
+    user_info = resp.json()
+    user = User.query.filter_by(google_id=user_info['sub']).first()
+    if not user:
+        user = User(google_id=user_info['sub'], email=user_info['email'], name=user_info['name'])
+        db.session.add(user)
+        db.session.commit()
+    login_user(user)
+    return redirect('/')
+
+@app.route('/logout')
+def logout():
+    logout_user()
+    return redirect('/')
+
+@app.route('/birthday/add', methods=['POST'])
+@login_required
+def add_birthday():
+    name = request.form.get('name')
+    day = int(request.form.get('day'))
+    month = int(request.form.get('month'))
+    bday = Birthday(user_id=current_user.id, name=name, day=day, month=month)
+    db.session.add(bday)
+    db.session.commit()
+    return redirect('/')
+
+@app.route('/birthday/delete/<int:id>')
+@login_required
+def delete_birthday(id):
+    bday = Birthday.query.get(id)
+    if bday and bday.user_id == current_user.id:
+        db.session.delete(bday)
+        db.session.commit()
+    return redirect('/')
 
 @app.route('/generate', methods=['POST'])
 def generate():
     jaar = int(request.form.get('year', datetime.date.today().year))
-    pdf = generate_pdf(jaar)
+    paper_size = request.form.get('paper_size', 'A3')
+    orientation = request.form.get('orientation', 'landscape')
+    show_birthdays = 'show_birthdays' in request.form
+    show_holidays = 'show_holidays' in request.form
+    show_vacations = 'show_vacations' in request.form
+    
+    pdf = generate_pdf(jaar, paper_size, orientation, show_birthdays, show_holidays, show_vacations)
     return send_file(pdf, download_name=f"kalender_{jaar}.pdf", as_attachment=True)
 
 if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
     app.run(host='0.0.0.0', port=5000)

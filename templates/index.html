@@ -3,24 +3,124 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kalender Generator</title>
+    <title>Stijlvolle Kalender Generator</title>
     <style>
-        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f4f4f9; }
-        .card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; }
-        input { padding: 10px; font-size: 1rem; width: 100px; margin-bottom: 1rem; border: 1px solid #ccc; border-radius: 4px; }
-        button { padding: 10px 20px; font-size: 1rem; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        button:hover { background: #0056b3; }
+        :root {
+            --primary: #4a90e2;
+            --secondary: #f5f7fa;
+            --accent: #e94e77;
+            --text: #333;
+            --shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--secondary); color: var(--text); margin: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+        header { background: white; width: 100%; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; box-shadow: var(--shadow); box-sizing: border-box; }
+        .container { max-width: 1000px; width: 95%; margin: 2rem 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+        @media (max-width: 768px) { .container { grid-template-columns: 1fr; } }
+        .card { background: white; padding: 2rem; border-radius: 12px; box-shadow: var(--shadow); }
+        h2 { margin-top: 0; color: var(--primary); border-bottom: 2px solid var(--secondary); padding-bottom: 0.5rem; }
+        .form-group { margin-bottom: 1.2rem; text-align: left; }
+        label { display: block; margin-bottom: 0.4rem; font-weight: bold; }
+        input[type="text"], input[type="number"], select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; }
+        .checkbox-group { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
+        .checkbox-item { display: flex; align-items: center; gap: 0.5rem; }
+        button { background: var(--primary); color: white; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; font-size: 1rem; font-weight: bold; transition: opacity 0.2s; width: 100%; }
+        button:hover { opacity: 0.9; }
+        .btn-logout { background: #eee; color: #666; width: auto; font-size: 0.9rem; padding: 8px 15px; }
+        .btn-delete { background: var(--accent); padding: 5px 10px; font-size: 0.8rem; width: auto; }
+        .birthday-list { list-style: none; padding: 0; max-height: 400px; overflow-y: auto; }
+        .birthday-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #eee; }
+        .birthday-item:last-child { border-bottom: none; }
+        .login-box { text-align: center; margin-top: 5rem; }
+        .login-btn { display: inline-block; background: white; border: 1px solid #ddd; padding: 12px 24px; border-radius: 30px; text-decoration: none; color: var(--text); font-weight: bold; box-shadow: var(--shadow); transition: transform 0.2s; }
+        .login-btn:hover { transform: translateY(-2px); }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h1>Kalender Generator</h1>
-        <p>Kies een jaar om de PDF te genereren:</p>
-        <form action="/generate" method="POST">
-            <input type="number" name="year" value="{{ year }}" min="1900" max="2100">
-            <br>
-            <button type="submit">Download PDF (A3)</button>
-        </form>
-    </div>
+    <header>
+        <div style="font-size: 1.5rem; font-weight: bold; color: var(--primary);">📅 Kalender Generator</div>
+        {% if current_user.is_authenticated %}
+            <div>
+                <span>Welkom, <strong>{{ current_user.name }}</strong></span>
+                <a href="/logout"><button class="btn-logout">Uitloggen</button></a>
+            </div>
+        {% endif %}
+    </header>
+
+    {% if not current_user.is_authenticated %}
+        <div class="login-box card">
+            <h2>Log in om te beginnen</h2>
+            <p>Beheer je eigen verjaardagen en personaliseer je kalender.</p>
+            <a href="/login" class="login-btn">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_Color_Icon.svg" width="20" style="vertical-align: middle; margin-right: 10px;">
+                Log in met Google
+            </a>
+        </div>
+    {% else %}
+        <div class="container">
+            <!-- Kalender Opties -->
+            <div class="card">
+                <h2>Kalender Genereren</h2>
+                <form action="/generate" method="POST">
+                    <div class="form-group">
+                        <label>Jaar</label>
+                        <input type="number" name="year" value="{{ year }}" min="1900" max="2100">
+                    </div>
+                    <div class="form-group">
+                        <label>Papierformaat</label>
+                        <select name="paper_size">
+                            <option value="A3" selected>A3 (Groot)</option>
+                            <option value="A4">A4 (Standaard)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Oriëntatie</label>
+                        <select name="orientation">
+                            <option value="landscape" selected>Liggend (Landscape)</option>
+                            <option value="portrait">Staand (Portrait)</option>
+                        </select>
+                    </div>
+                    <div class="checkbox-group">
+                        <div class="checkbox-item">
+                            <input type="checkbox" name="show_birthdays" checked id="cb1">
+                            <label for="cb1">Mijn verjaardagen</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" name="show_holidays" checked id="cb2">
+                            <label for="cb2">Feestdagen (BE)</label>
+                        </div>
+                        <div class="checkbox-item">
+                            <input type="checkbox" name="show_vacations" checked id="cb3">
+                            <label for="cb3">Schoolvakanties (VL)</label>
+                        </div>
+                    </div>
+                    <button type="submit">Download PDF</button>
+                </form>
+            </div>
+
+            <!-- Verjaardagen Beheer -->
+            <div class="card">
+                <h2>Mijn Verjaardagen</h2>
+                <form action="/birthday/add" method="POST" style="display: grid; grid-template-columns: 2fr 1fr 1fr auto; gap: 5px; margin-bottom: 20px;">
+                    <input type="text" name="name" placeholder="Naam" required>
+                    <input type="number" name="day" placeholder="Dag" min="1" max="31" required>
+                    <input type="number" name="month" placeholder="Maand" min="1" max="12" required>
+                    <button type="submit" style="padding: 10px;">+</button>
+                </form>
+                
+                <ul class="birthday-list">
+                    {% for b in user_birthdays %}
+                        <li class="birthday-item">
+                            <div>
+                                <strong>{{ b.day }}/{{ b.month }}</strong> - {{ b.name }}
+                            </div>
+                            <a href="/birthday/delete/{{ b.id }}"><button class="btn-delete">Verwijder</button></a>
+                        </li>
+                    {% else %}
+                        <li style="text-align: center; color: #999; margin-top: 20px;">Nog geen verjaardagen toegevoegd.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    {% endif %}
 </body>
 </html>

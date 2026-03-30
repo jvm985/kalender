@@ -38,11 +38,13 @@ ssh $SERVER << EOF
     sudo docker stop $APP_NAME || true
     sudo docker rm $APP_NAME || true
     
-    # Run container op poort 5050
+    # Run container op poort 5050 met volume voor DB
     sudo docker run -d \
         --name $APP_NAME \
         --restart always \
         -p $APP_PORT:5000 \
+        -v kalender_data:/data \
+        -e GOOGLE_CLIENT_SECRET="PLAATS_HIER_JE_SECRET" \
         $APP_NAME
 
     # Nginx configuratie instellen
