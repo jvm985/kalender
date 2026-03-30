@@ -52,6 +52,13 @@ ssh $SERVER << EOF
     # Nginx testen en herladen
     sudo nginx -t && sudo systemctl reload nginx
 
+    # Let's Encrypt SSL aanvragen (indien nog niet aanwezig)
+    if [ ! -d "/etc/letsencrypt/live/kalender.irishof.cloud" ]; then
+        echo "--- Aanvragen van SSL certificaat via Let's Encrypt ---"
+        sudo apt-get update && sudo apt-get install -y certbot python3-certbot-nginx
+        sudo certbot --nginx -d kalender.irishof.cloud --non-interactive --agree-tos -m jvm985@gmail.com --redirect
+    fi
+
     echo "Deployment voltooid op $SERVER"
-    echo "App draait op http://kalender.irishof.cloud"
+    echo "App draait op https://kalender.irishof.cloud"
 EOF
