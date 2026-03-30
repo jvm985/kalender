@@ -12,9 +12,12 @@ if [ ! -d .git ]; then
     git remote add origin $REPO
 fi
 
+# Zorg dat we op master zitten
+git checkout -b master || git checkout master
+
 git add .
 git commit -m "Full deploy: Web app, Docker, and Nginx config"
-git push origin main || git push origin master
+git push origin master --force
 
 echo "--- Stap 2: Deployment naar server ($SERVER) ---"
 ssh $SERVER << EOF
@@ -25,9 +28,10 @@ ssh $SERVER << EOF
     # Code ophalen
     if [ ! -d .git ]; then
         git clone $REPO .
-    else
-        git pull origin main || git pull origin master
     fi
+    
+    git fetch origin
+    git reset --hard origin/master
 
     # Docker image bouwen en container herstarten
     sudo docker build -t $APP_NAME .
