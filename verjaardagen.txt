@@ -1,0 +1,31 @@
+25/12 Joachim
+25/12 Maria
+01/01 Nieuwjaar
+14/02 Valentijn
+04/07 Testpersoon
+15/08 Maria
+10/10 DubbelGanger 1
+10/10 DubbelGanger 2
+
+# Officiële Feestdagen 2026 (België)
+01/01 Nieuwjaar
+05/04 Pasen
+06/04 Paasmaandag
+01/05 Dag van de Arbeid
+14/05 O.L.H. Hemelvaart
+24/05 Pinksteren
+25/05 Pinkstermaandag
+11/07 Feest Vlaamse Gemeenschap
+21/07 Nationale Feestdag
+15/08 O.L.V. Hemelvaart
+01/11 Allerheiligen
+11/11 Wapenstilstand
+25/12 Kerstmis
+
+# Schoolvakanties 2026 (Vlaanderen)
+01/01-04/01 Kerstvakantie
+16/02-22/02 Krokusvakantie
+06/04-19/04 Paasvakantie
+01/07-31/08 Zomervakantie
+02/11-08/11 Herfstvakantie
+21/12-31/12 Kerstvakantie

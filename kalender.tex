@@ -1,0 +1,74 @@
+\documentclass[a3paper,landscape]{article}
+\usepackage[a3paper,landscape,margin=1.5cm]{geometry}
+\usepackage{fontspec}
+\usepackage{tikz}
+\usetikzlibrary{calendar}
+\usepackage[dutch]{babel}
+\usepackage{etoolbox}
+
+% Gebruik een modern schreefloos lettertype
+\setmainfont{Latin Modern Sans}
+
+% --- STAP 1: Lua-script inladen ---
+\directlua{dofile("readbdays.lua")}
+
+% --- STAP 2: Weergave macro ---
+\newcommand{\showbirthdays}[1]{%
+  \edef\currentbdays{\directlua{tex.sprint(get_bdays(\number\pgfcalendarcurrentday, \number\pgfcalendarcurrentmonth))}}%
+  \ifdefempty{\currentbdays}{}{%
+    \node[anchor=north west, xshift=0.3cm, yshift=-0.5cm, font=\large\bfseries, align=left, text=black] at (0,0) {\currentbdays};
+  }%
+}
+
+\begin{document}
+\pagestyle{empty}
+
+\def\jaar{2026}
+\def\breedte{5.5} % Maten in cm zonder eenheid voor Lua
+\def\hoogte{4.0}
+
+\foreach \m in {1,...,12}{
+    \begin{center}
+    \begin{tikzpicture}
+        % 1. Teken het grid (7 kolommen, tot 6 rijen)
+        \foreach \row in {0,...,5} {
+            \foreach \col in {0,...,6} {
+                \draw[thick] (\col*\breedte, -\row*\hoogte) rectangle ++(\breedte, -\hoogte);
+            }
+        }
+
+        % 2. De kalender voor de huidige maand
+        \calendar (mycal) [
+            dates=\jaar-\m-01 to \jaar-\m-last,
+            week list,
+            day xshift=\breedte cm,
+            day yshift=\hoogte cm,
+            day code={
+                \node[anchor=north east, xshift=-0.2cm, yshift=-0.2cm, font=\huge\bfseries] at (\breedte, 0) {\tikzdaytext};
+                \showbirthdays{\m}
+                \ifdate{Monday}{
+                    \node[anchor=north west, xshift=0.2cm, yshift=-0.2cm, font=\small\bfseries, text=gray] at (0,0) {W\directlua{tex.sprint(get_week_num(\jaar, \m, \number\pgfcalendarcurrentday))}};
+                }{}
+            }
+        ];
+
+        % 3. De opvulling via Lua (vorige/volgende maand in grijs)
+        \directlua{fill_gaps(\jaar, \m, \breedte, \hoogte)}
+
+        % 4. Maandnaam bovenaan
+        \node[above, font=\fontsize{50}{60}\selectfont\bfseries, yshift=2.5cm] 
+            at (3.5*\breedte, 0) {%
+            \ifcase\m\or Januari\or Februari\or Maart\or April\or Mei\or Juni\or
+            Juli\or Augustus\or September\or Oktober\or November\or December\fi\ \jaar%
+        };
+
+        % 5. Dagnamen
+        \foreach \d [count=\i] in {Maandag, Dinsdag, Woensdag, Donderdag, Vrijdag, Zaterdag, Zondag} {
+            \node[anchor=south, minimum width=\breedte cm, font=\LARGE\bfseries] 
+                at (\i*\breedte - 0.5*\breedte, 0.5) {\d};
+        }
+    \end{tikzpicture}
+    \end{center}
+    \newpage
+}
+\end{document}
