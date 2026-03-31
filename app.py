@@ -89,126 +89,117 @@ def load_user(user_id):
 MM_TO_PT = 72 / 25.4
 MONTH_NAMES = ["", "Januari", "Februari", "Maart", "April", "Mei", "Juni", "Juli", "Augustus", "September", "Oktober", "November", "December"]
 DAY_NAMES = ["Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag", "Zaterdag", "Zondag"]
-CACHE_FILE = os.path.join(DATA_DIR, "kalender_cache.json")
+CACHE_FILE = os.path.join(DATA_DIR, "kalender_cache_v2.json")
 
 def get_week_num(y, m, d):
     return datetime.date(y, m, d).isocalendar()[1]
 
-def load_data(jaar):
+def load_all_vlaanderen_data():
+    """Scraapt alle beschikbare schooljaren en feestdagen van Vlaanderen.be"""
     if os.path.exists(CACHE_FILE):
-        if (datetime.datetime.now() - datetime.datetime.fromtimestamp(os.path.getmtime(CACHE_FILE))).days < 30:
+        # Cache voor 7 dagen
+        if (datetime.datetime.now() - datetime.datetime.fromtimestamp(os.path.getmtime(CACHE_FILE))).days < 7:
             with open(CACHE_FILE, 'r') as f:
-                cache = json.load(f)
-                if str(jaar) in cache: return cache[str(jaar)]
-    
-    day_events = {}; v_ranges = []
-    
-    # Vertalingen voor veelvoorkomende Engelstalige feestdagen van de API
-    translations = {
-        "New Year's Day": "Nieuwjaar",
-        "Easter Monday": "Paasmaandag",
-        "Labour Day": "Dag van de Arbeid",
-        "Ascension Day": "O.L.H. Hemelvaart",
-        "Whit Monday": "Pinkstermaandag",
-        "Belgian National Day": "Nationale feestdag",
-        "Assumption of Mary": "O.L.V. Hemelvaart",
-        "All Saints' Day": "Allerheiligen",
-        "Armistice Day": "Wapenstilstand",
-        "Christmas Day": "Kerstmis",
-        "St. Stephen's Day": "Tweede Kerstdag"
-    }
+                return json.load(f)
 
-    try:
-        r = requests.get(f"https://date.nager.at/api/v3/PublicHolidays/{jaar}/BE", timeout=5)
-        if r.status_code == 200:
-            for h in r.json():
-                date_obj = datetime.date.fromisoformat(h['date'])
-                if date_obj.month not in day_events: day_events[date_obj.month] = {}
-                if date_obj.day not in day_events[date_obj.month]: day_events[date_obj.month][date_obj.day] = []
-                
-                name = h.get('localName') or h.get('name')
-                # Forceer Nederlands als we een vertaling hebben
-                name = translations.get(h.get('name'), name)
-                day_events[date_obj.month][date_obj.day].append(name)
-    except: pass
+    url = "https://www.vlaanderen.be/onderwijs-en-vorming/wat-mag-en-moet-op-school/schoolvakanties-vrije-dagen-en-afwezigheden/schoolvakanties"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    data = {"events": [], "ranges": []}
+    maanden_dict = {"januari":1, "februari":2, "maart":3, "april":4, "mei":5, "juni":6, "juli":7, "augustus":8, "september":9, "oktober":10, "november":11, "december":12}
     
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        url = "https://www.vlaanderen.be/onderwijs-en-vorming/wat-mag-en-moet-op-school/schoolvakanties-vrije-dagen-en-afwezigheden/schoolvakanties"
-        r = requests.get(url, headers=headers, timeout=5)
+        r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             content = r.text
-            maanden_dict = {"januari":1, "februari":2, "maart":3, "april":4, "mei":5, "juni":6, "juli":7, "augustus":8, "september":9, "oktober":10, "november":11, "december":12}
+            # Stap 1: Vind alle secties per schooljaar (bijv. 2025-2026)
+            # We splitsen op de koppen
+            sections = re.split(r'<(?:h[234]|span)[^>]*>(?:\s*Schooljaar\s*|Schoolvakanties\s*)?(\d{4}-\d{4}).*?</(?:h[234]|span)>', content, flags=re.IGNORECASE)
             
-            seen = set()
-            for v_name in ["Herfstvakantie", "Kerstvakantie", "Krokusvakantie", "Paasvakantie", "Zomervakantie"]:
-                # Verbeterde regex: flexibel voor één of twee maandnamen
-                pattern = rf"{v_name}:.*?(\d+)(?:\s+([a-z]+))?.*?(\d+)\s+([a-z]+)\s+(\d{{4}})"
-                matches = re.finditer(pattern, content, re.IGNORECASE | re.DOTALL)
-                for m in matches:
-                    d1, m1_str, d2, m2_str, ey_str = m.groups()
-                    ey = int(ey_str)
-                    m2 = maanden_dict.get(m2_str.lower())
-                    # Als de eerste maand ontbreekt, gebruik de tweede
-                    m1 = maanden_dict.get(m1_str.lower()) if (m1_str and m1_str.lower() in maanden_dict) else m2
+            # sections[0] is de intro tekst
+            # daarna hebben we paren: [ "2025-2026", "sectie content", "2026-2027", "sectie content" ]
+            for i in range(1, len(sections), 2):
+                sj_label = sections[i]
+                sj_content = sections[i+1]
+                
+                # Zoek alle <li> elementen in deze sectie
+                items = re.findall(r'<li>(.*?)</li>', sj_content, re.DOTALL)
+                for item in items:
+                    # Strip HTML tags
+                    clean_item = re.sub(r'<.*?>', '', item).strip()
+                    if not clean_item: continue
                     
-                    if m1 and m2:
-                        sy = ey
-                        if m1 > m2: sy = ey - 1
-                        
-                        if sy == jaar or ey == jaar:
-                            v_range = {
-                                'start': datetime.date(sy, m1, int(d1)).isoformat(), 
-                                'end': datetime.date(ey, m2, int(d2)).isoformat(), 
-                                'name': v_name
-                            }
-                            # Vermijd duplicaten
-                            v_key = (v_range['start'], v_range['end'], v_range['name'])
-                            if v_key not in seen:
-                                v_ranges.append(v_range)
-                                seen.add(v_key)
+                    # Match bereik: "Naam: van 27 oktober tot en met 2 november 2025"
+                    # Regex groepen: 1=Naam, 2=d1, 3=m1, 4=d2, 5=m2, 6=jaar
+                    range_match = re.search(r'^(.*?):\s*van\s+.*?\b(\d+)\s+([a-z]+)?.*?\b(\d+)\s+([a-z]+)\s+(\d{4})', clean_item, re.IGNORECASE)
+                    if range_match:
+                        name, d1, m1_str, d2, m2_str, ey_str = range_match.groups()
+                        ey = int(ey_str)
+                        m2 = maanden_dict.get(m2_str.lower())
+                        m1 = maanden_dict.get(m1_str.lower()) if (m1_str and m1_str.lower() in maanden_dict) else m2
+                        if m1 and m2:
+                            sy = ey
+                            if m1 > m2: sy = ey - 1
+                            data["ranges"].append({
+                                "start": datetime.date(sy, m1, int(d1)).isoformat(),
+                                "end": datetime.date(ey, m2, int(d2)).isoformat(),
+                                "name": name.strip()
+                            })
+                        continue
+
+                    # Match losse dag: "Wapenstilstand: dinsdag 11 november 2025"
+                    # Of: "Pinkstermaandag: 25 mei 2026"
+                    day_match = re.search(r'^(.*?):\s*.*?\b(\d+)\s+([a-z]+)\s+(\d{4})', clean_item, re.IGNORECASE)
+                    if day_match:
+                        name, d, m_str, y_str = day_match.groups()
+                        m = maanden_dict.get(m_str.lower())
+                        if m:
+                            data["events"].append({
+                                "date": datetime.date(int(y_str), m, int(d)).isoformat(),
+                                "name": name.strip()
+                            })
+
+            with open(CACHE_FILE, 'w') as f:
+                json.dump(data, f)
     except Exception as e:
         print(f"Scraping error: {e}")
-    
-    data = {"events": day_events, "ranges": v_ranges}
-    cache = {}
-    if os.path.exists(CACHE_FILE):
-        try:
-            with open(CACHE_FILE, 'r') as f: cache = json.load(f)
-        except: pass
-    cache[str(jaar)] = data
-    with open(CACHE_FILE, 'w') as f: json.dump(cache, f)
+        
     return data
 
 def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=True, show_holidays=True, show_vacations=True, is_schoolyear=False):
-    # Als het een schooljaar is, hebben we data nodig van jaar en jaar+1
-    years_to_load = [jaar, jaar + 1] if is_schoolyear else [jaar]
+    all_data = load_all_vlaanderen_data()
     
-    day_events = {} # format: {year: {month: {day: [events]}}}
-    holiday_dates = set() # format: (year, month, day)
+    day_events = {} # {year: {month: {day: [names]}}}
+    holiday_dates = set() # {(year, month, day)}
     v_ranges = []
     
-    for y in years_to_load:
-        online_data = load_data(y)
-        if show_holidays:
-            for m_str, days in online_data['events'].items():
-                m = int(m_str)
-                if y not in day_events: day_events[y] = {}
-                if m not in day_events[y]: day_events[y][m] = {}
-                for d_str, v in days.items():
-                    d = int(d_str)
-                    day_events[y][m][d] = v
-                    holiday_dates.add((y, m, d))
-        
-        if show_vacations:
-            for r in online_data['ranges']:
-                s_date = datetime.date.fromisoformat(r['start'])
-                e_date = datetime.date.fromisoformat(r['end'])
+    target_years = [jaar, jaar + 1] if is_schoolyear else [jaar]
+    
+    # Verwerk vakantie-bereiken
+    if show_vacations:
+        for r in all_data["ranges"]:
+            s_date = datetime.date.fromisoformat(r['start'])
+            e_date = datetime.date.fromisoformat(r['end'])
+            # Alleen bereiken die overlap hebben met onze target jaren
+            if s_date.year in target_years or e_date.year in target_years:
                 v_ranges.append({'start': s_date, 'end': e_date, 'name': r['name']})
 
+    # Verwerk losse feestdagen
+    if show_holidays:
+        for e in all_data["events"]:
+            d_obj = datetime.date.fromisoformat(e['date'])
+            if d_obj.year in target_years:
+                y, m, d = d_obj.year, d_obj.month, d_obj.day
+                if y not in day_events: day_events[y] = {}
+                if m not in day_events[y]: day_events[y][m] = {}
+                if d not in day_events[y][m]: day_events[y][m][d] = []
+                day_events[y][m][d].append(e['name'])
+                holiday_dates.add((y, m, d))
+
+    # Verjaardagen (vallen elk jaar op dezelfde dag)
     if show_birthdays and current_user.is_authenticated:
         all_birthdays = Birthday.query.filter_by(user_id=current_user.id).all()
-        for y in years_to_load:
+        for y in target_years:
             if y not in day_events: day_events[y] = {}
             for b in all_birthdays:
                 if b.month not in day_events[y]: day_events[y][b.month] = {}
@@ -226,14 +217,11 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
     surface = cairo.PDFSurface(output, pw_pt, ph_pt)
     ctx = cairo.Context(surface)
     
-    # Bepaal de maanden en jaren die we gaan tekenen
     months_to_draw = []
     if is_schoolyear:
-        # Sept t/m Dec van jaar, Jan t/m Aug van jaar+1
         for m in range(9, 13): months_to_draw.append((jaar, m))
         for m in range(1, 9): months_to_draw.append((jaar + 1, m))
     else:
-        # Jan t/m Dec van jaar
         for m in range(1, 13): months_to_draw.append((jaar, m))
 
     for cur_year, month in months_to_draw:
@@ -255,24 +243,19 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
         fday = datetime.date(cur_year, month, 1); fwd = fday.weekday()
         for k in range(42):
             col, row = k % 7, k // 7; x, y = sx + col * cell_w_pt, sy + row * cell_h_pt; cdate = fday + datetime.timedelta(days=k - fwd)
-            
-            # Check of het een vakantie of feestdag is voor de markeerstift
             is_holiday = show_holidays and (cur_year, cdate.month, cdate.day) in holiday_dates
-            
             active_vacations = [r for r in v_ranges if r['start'] <= cdate <= r['end']]
             has_line = len(active_vacations) > 0 or is_holiday
             
             if has_line:
-                # Blauwe lijn, doorzichtig, bovenaan het vak
                 ctx.set_source_rgba(0.2, 0.6, 0.8, 0.3)
-                bar_height = (8 if paper_size == 'A3' else 6) # ~1/3 van hoogte dagnummers
+                bar_height = (8 if paper_size == 'A3' else 6)
                 ctx.rectangle(x, y, cell_w_pt, bar_height)
                 ctx.fill()
                 
                 for r in active_vacations:
                     if cdate == r['start']:
-                        ctx.set_source_rgb(0,0,0)
-                        ctx.set_font_size(8 if paper_size == 'A3' else 6)
+                        ctx.set_source_rgb(0,0,0); ctx.set_font_size(8 if paper_size == 'A3' else 6)
                         ctx.move_to(x + 3*MM_TO_PT, y + bar_height + 6); ctx.show_text(r['name'])
 
             ctx.set_font_size(18 if paper_size == 'A3' else 12); ctx.set_source_rgb(0,0,0) if cdate.month == month else ctx.set_source_rgb(0.6,0.6,0.6)
@@ -287,7 +270,6 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
                 evs = day_events.get(cur_year, {}).get(cdate.month, {}).get(cdate.day, [])
                 if evs:
                     ctx.set_source_rgb(0,0,0); ctx.set_font_size(9 if paper_size == 'A3' else 7)
-                    # Terug van bovenaan starten
                     y_offset = 7*MM_TO_PT
                     for idx, name in enumerate(evs): 
                         ctx.move_to(x + 3*MM_TO_PT, y + y_offset + idx * (11 if paper_size == 'A3' else 8))
