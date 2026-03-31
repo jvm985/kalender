@@ -91,6 +91,22 @@ def load_data(jaar):
                 if str(jaar) in cache: return cache[str(jaar)]
     
     day_events = {}; v_ranges = []
+    
+    # Vertalingen voor veelvoorkomende Engelstalige feestdagen van de API
+    translations = {
+        "New Year's Day": "Nieuwjaar",
+        "Easter Monday": "Paasmaandag",
+        "Labour Day": "Dag van de Arbeid",
+        "Ascension Day": "O.L.H. Hemelvaart",
+        "Whit Monday": "Pinkstermaandag",
+        "Belgian National Day": "Nationale feestdag",
+        "Assumption of Mary": "O.L.V. Hemelvaart",
+        "All Saints' Day": "Allerheiligen",
+        "Armistice Day": "Wapenstilstand",
+        "Christmas Day": "Kerstmis",
+        "St. Stephen's Day": "Tweede Kerstdag"
+    }
+
     try:
         r = requests.get(f"https://date.nager.at/api/v3/PublicHolidays/{jaar}/BE", timeout=5)
         if r.status_code == 200:
@@ -98,7 +114,11 @@ def load_data(jaar):
                 date_obj = datetime.date.fromisoformat(h['date'])
                 if date_obj.month not in day_events: day_events[date_obj.month] = {}
                 if date_obj.day not in day_events[date_obj.month]: day_events[date_obj.month][date_obj.day] = []
-                day_events[date_obj.month][date_obj.day].append(h['localName'])
+                
+                name = h.get('localName') or h.get('name')
+                # Forceer Nederlands als we een vertaling hebben
+                name = translations.get(h.get('name'), name)
+                day_events[date_obj.month][date_obj.day].append(name)
     except: pass
     
     try:
@@ -226,21 +246,23 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
             col, row = k % 7, k // 7; x, y = sx + col * cell_w_pt, sy + row * cell_h_pt; cdate = fday + datetime.timedelta(days=k - fwd)
             
             # Check of het een vakantie of feestdag is voor de markeerstift
-            is_holiday = show_holidays and (cdate.year, cdate.month, cdate.day) in holiday_dates
+            is_holiday = show_holidays and (cur_year, cdate.month, cdate.day) in holiday_dates
             
             active_vacations = [r for r in v_ranges if r['start'] <= cdate <= r['end']]
             has_line = len(active_vacations) > 0 or is_holiday
             
             if has_line:
-                ctx.set_source_rgb(0.2, 0.6, 0.8)
-                ctx.set_line_width(1.5 if paper_size == 'A3' else 1.0)
-                ly = y + (24 if paper_size == 'A3' else 18)
-                ctx.move_to(x + 2*MM_TO_PT, ly); ctx.line_to(x + cell_w_pt - 2*MM_TO_PT, ly); ctx.stroke()
+                # Blauwe lijn, doorzichtig, bovenaan het vak
+                ctx.set_source_rgba(0.2, 0.6, 0.8, 0.3)
+                bar_height = (8 if paper_size == 'A3' else 6) # ~1/3 van hoogte dagnummers
+                ctx.rectangle(x, y, cell_w_pt, bar_height)
+                ctx.fill()
                 
                 for r in active_vacations:
                     if cdate == r['start']:
+                        ctx.set_source_rgb(0,0,0)
                         ctx.set_font_size(8 if paper_size == 'A3' else 6)
-                        ctx.move_to(x + 3*MM_TO_PT, ly - 3); ctx.show_text(r['name'])
+                        ctx.move_to(x + 3*MM_TO_PT, y + bar_height + 6); ctx.show_text(r['name'])
 
             ctx.set_font_size(18 if paper_size == 'A3' else 12); ctx.set_source_rgb(0,0,0) if cdate.month == month else ctx.set_source_rgb(0.6,0.6,0.6)
             dn_txt = str(cdate.day); _, yb, w, h, _, _ = ctx.text_extents(dn_txt); ctx.move_to(x + cell_w_pt - 2*MM_TO_PT - w, y + 2*MM_TO_PT - yb); ctx.show_text(dn_txt)
@@ -254,7 +276,8 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
                 evs = day_events.get(cur_year, {}).get(cdate.month, {}).get(cdate.day, [])
                 if evs:
                     ctx.set_source_rgb(0,0,0); ctx.set_font_size(9 if paper_size == 'A3' else 7)
-                    y_offset = (12*MM_TO_PT if has_line else 7*MM_TO_PT)
+                    # Terug van bovenaan starten
+                    y_offset = 7*MM_TO_PT
                     for idx, name in enumerate(evs): 
                         ctx.move_to(x + 3*MM_TO_PT, y + y_offset + idx * (11 if paper_size == 'A3' else 8))
                         ctx.show_text(name)
