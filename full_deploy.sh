@@ -30,6 +30,9 @@ ssh $SERVER << EOF
         git clone $REPO .
     fi
     
+    git fetch origin
+    git reset --hard origin/master
+
     # Gebruik het snelle deploy script
     chmod +x deploy.sh
     ./deploy.sh
