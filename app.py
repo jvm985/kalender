@@ -197,25 +197,46 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
         fday = datetime.date(jaar, month, 1); fwd = fday.weekday()
         for k in range(42):
             col, row = k % 7, k // 7; x, y = sx + col * cell_w_pt, sy + row * cell_h_pt; cdate = fday + datetime.timedelta(days=k - fwd)
-            active = [r for r in v_ranges if r['start'] <= cdate <= r['end']]
-            for ridx, r in enumerate(active):
-                ctx.set_source_rgba(0.2, 0.6, 0.8, 0.3); ctx.set_line_width(18.0 if paper_size == 'A3' else 12.0)
-                ly = y + (12 if paper_size == 'A3' else 8) + (ridx * (20 if paper_size == 'A3' else 14))
-                ctx.move_to(x, ly); ctx.line_to(x + cell_w_pt, ly); ctx.stroke()
-                if cdate == r['start']:
-                    ctx.set_source_rgb(0,0,0); ctx.set_font_size(8 if paper_size == 'A3' else 6); ctx.move_to(x + 5, ly + 3); ctx.show_text(r['name'])
+            
+            # Check of het een vakantie of feestdag is voor de markeerstift
+            is_holiday = show_holidays and cdate.month in day_events and cdate.day in day_events[cdate.month]
+            # (We checken alleen de originele feestdagen, niet de verjaardagen die later zijn toegevoegd)
+            # Eigenlijk is het simpeler om te checken in online_data['events']
+            is_holiday = show_holidays and str(cdate.month) in online_data['events'] and str(cdate.day) in online_data['events'][str(cdate.month)]
+            
+            active_vacations = [r for r in v_ranges if r['start'] <= cdate <= r['end']]
+            has_line = len(active_vacations) > 0 or is_holiday
+            
+            if has_line:
+                ctx.set_source_rgb(0.2, 0.6, 0.8)
+                ctx.set_line_width(1.5 if paper_size == 'A3' else 1.0)
+                # Lijn net onder het nummer
+                ly = y + (24 if paper_size == 'A3' else 18)
+                ctx.move_to(x + 2*MM_TO_PT, ly); ctx.line_to(x + cell_w_pt - 2*MM_TO_PT, ly); ctx.stroke()
+                
+                # Toon vakantie naam indien van toepassing
+                for r in active_vacations:
+                    if cdate == r['start']:
+                        ctx.set_font_size(8 if paper_size == 'A3' else 6)
+                        ctx.move_to(x + 3*MM_TO_PT, ly - 3); ctx.show_text(r['name'])
+
             ctx.set_font_size(18 if paper_size == 'A3' else 12); ctx.set_source_rgb(0,0,0) if cdate.month == month else ctx.set_source_rgb(0.6,0.6,0.6)
             dn_txt = str(cdate.day); _, yb, w, h, _, _ = ctx.text_extents(dn_txt); ctx.move_to(x + cell_w_pt - 2*MM_TO_PT - w, y + 2*MM_TO_PT - yb); ctx.show_text(dn_txt)
+            
             if col == 0:
                 ctx.set_font_size(8 if paper_size == 'A3' else 6); ctx.set_source_rgb(0.5, 0.5, 0.5)
                 wn_txt = f"W{get_week_num(cdate.year, cdate.month, cdate.day)}"; _, yb, w, h, _, _ = ctx.text_extents(wn_txt)
-                # Teken links van de eerste kolom (sx)
                 ctx.move_to(sx - w - 4*MM_TO_PT, y + 4*MM_TO_PT - yb); ctx.show_text(wn_txt)
+
             if cdate.month == month:
                 evs = day_events.get(cdate.month, {}).get(cdate.day, [])
                 if evs:
                     ctx.set_source_rgb(0,0,0); ctx.set_font_size(9 if paper_size == 'A3' else 7)
-                    for idx, name in enumerate(evs): ctx.move_to(x + 3*MM_TO_PT, y + 6*MM_TO_PT + idx * (11 if paper_size == 'A3' else 8)); ctx.show_text(name)
+                    # Start tekst lager als er een lijn staat
+                    y_offset = (12*MM_TO_PT if has_line else 7*MM_TO_PT)
+                    for idx, name in enumerate(evs): 
+                        ctx.move_to(x + 3*MM_TO_PT, y + y_offset + idx * (11 if paper_size == 'A3' else 8))
+                        ctx.show_text(name)
         ctx.show_page()
     ctx.show_page(); surface.finish(); output.seek(0)
     return output
