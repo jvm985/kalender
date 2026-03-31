@@ -29,7 +29,12 @@ app.config.update(
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
 
 # Database Setup
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:////data/kalender.db'
+DATA_DIR = '/data'
+if not os.path.exists(DATA_DIR) or not os.access(DATA_DIR, os.W_OK):
+    DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+
+db_path = os.path.join(DATA_DIR, 'kalender.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -73,7 +78,7 @@ def load_user(user_id):
 MM_TO_PT = 72 / 25.4
 MONTH_NAMES = ["", "Januari", "Februari", "Maart", "April", "Mei", "Juni", "Juli", "Augustus", "September", "Oktober", "November", "December"]
 DAY_NAMES = ["Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag", "Zaterdag", "Zondag"]
-CACHE_FILE = "/data/kalender_cache.json"
+CACHE_FILE = os.path.join(DATA_DIR, "kalender_cache.json")
 
 def get_week_num(y, m, d):
     return datetime.date(y, m, d).isocalendar()[1]
@@ -264,6 +269,9 @@ def generate():
     pdf = generate_pdf(int(request.form.get('year', 2026)), request.form.get('paper_size', 'A3'), request.form.get('orientation', 'landscape'), 'show_birthdays' in request.form, 'show_holidays' in request.form, 'show_vacations' in request.form)
     return send_file(pdf, download_name=f"kalender.pdf", as_attachment=True)
 
+# Initialize database tables
+with app.app_context():
+    db.create_all()
+
 if __name__ == '__main__':
-    with app.app_context(): db.create_all()
     app.run(host='0.0.0.0', port=5000)
