@@ -105,11 +105,17 @@
                                     <input type="radio" name="year_type" value="calendar" checked id="type_calendar"> Kalender
                                 </label>
                                 <label style="font-weight: normal; display: flex; align-items: center; gap: 4px;">
-                                    <input type="radio" name="year_type" value="school" id="type_school"> School
+                                    <input type="radio" name="year_type" value="school" id="id_type_school"> School
                                 </label>
                             </div>
-                            <input type="number" name="year" id="year" value="{{ year }}" min="1900" max="2100">
-                            <div id="yearDisplay" style="margin-top: 5px; font-weight: bold; color: #666; font-size: 0.9rem;"></div>
+                            <!-- Verborgen veld voor de werkelijke numerieke waarde -->
+                            <input type="hidden" name="year" id="yearValue" value="{{ year }}">
+                            <!-- Zichtbaar veld voor de weergave -->
+                            <input type="text" id="yearDisplay" value="{{ year }}" style="background: #f9f9f9; font-weight: bold; text-align: center;" readonly>
+                            <div style="display: flex; gap: 5px; margin-top: 5px;">
+                                <button type="button" onclick="changeYear(-1)" style="padding: 5px; background: #eee; color: #333;">-</button>
+                                <button type="button" onclick="changeYear(1)" style="padding: 5px; background: #eee; color: #333;">+</button>
+                            </div>
                         </div>
                         <div class="form-group">
                             <label>Papierformaat</label>
@@ -200,24 +206,30 @@
         </div>
 
         <script>
-            const formElements = ['year', 'paper_size', 'orientation', 'show_birthdays', 'show_holidays', 'show_vacations', 'type_calendar', 'type_school'];
+            const formElements = ['paper_size', 'orientation', 'show_birthdays', 'show_holidays', 'show_vacations', 'type_calendar', 'id_type_school'];
             const previewIframe = document.getElementById('pdfPreview');
 
+            function changeYear(delta) {
+                const valEl = document.getElementById('yearValue');
+                valEl.value = parseInt(valEl.value) + delta;
+                updatePreview();
+            }
+
             function updatePreview() {
-                const year = document.getElementById('year').value;
+                const year = document.getElementById('yearValue').value;
                 const size = document.getElementById('paper_size').value;
                 const orient = document.getElementById('orientation').value;
                 const bdays = document.getElementById('show_birthdays').checked;
                 const holidays = document.getElementById('show_holidays').checked;
                 const vacations = document.getElementById('show_vacations').checked;
-                const isSchool = document.getElementById('type_school').checked;
+                const isSchool = document.getElementById('id_type_school').checked;
 
-                // Update de tekstweergave onder het invoerveld
+                // Update de tekstweergave IN het vakje
                 const display = document.getElementById('yearDisplay');
-                if (isSchool && year) {
-                    display.innerText = `${year} - ${parseInt(year) + 1}`;
+                if (isSchool) {
+                    display.value = `${year} - ${parseInt(year) + 1}`;
                 } else {
-                    display.innerText = "";
+                    display.value = year;
                 }
 
                 const url = `/pdf_preview?year=${year}&paper_size=${size}&orientation=${orient}&show_birthdays=${bdays}&show_holidays=${holidays}&show_vacations=${vacations}&is_schoolyear=${isSchool}&t=${new Date().getTime()}`;
