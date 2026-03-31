@@ -107,37 +107,35 @@ def load_data(jaar):
         r = requests.get(url, headers=headers, timeout=5)
         if r.status_code == 200:
             content = r.text
-            # Flexibele patronen voor verschillende formats
-            # We zoeken nu specifieker naar de datumcombinaties
-            patterns = [
-                (r"Herfstvakantie:.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+(\d{4})", "Herfstvakantie"),
-                (r"Kerstvakantie:.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+(\d{4})", "Kerstvakantie"),
-                (r"Krokusvakantie:.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+(\d{4})", "Krokusvakantie"),
-                (r"Paasvakantie:.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+(\d{4})", "Paasvakantie"),
-                (r"Zomervakantie:.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+(\d{4})", "Zomervakantie")
-            ]
-            maanden = {"januari":1, "februari":2, "maart":3, "april":4, "mei":5, "juni":6, "juli":7, "augustus":8, "september":9, "oktober":10, "november":11, "december":12}
-            for p_raw, v_name in patterns:
-                matches = re.finditer(p_raw, content, re.IGNORECASE | re.DOTALL)
+            maanden_dict = {"januari":1, "februari":2, "maart":3, "april":4, "mei":5, "juni":6, "juli":7, "augustus":8, "september":9, "oktober":10, "november":11, "december":12}
+            
+            seen = set()
+            for v_name in ["Herfstvakantie", "Kerstvakantie", "Krokusvakantie", "Paasvakantie", "Zomervakantie"]:
+                # Verbeterde regex: flexibel voor één of twee maandnamen
+                pattern = rf"{v_name}:.*?(\d+)(?:\s+([a-z]+))?.*?(\d+)\s+([a-z]+)\s+(\d{{4}})"
+                matches = re.finditer(pattern, content, re.IGNORECASE | re.DOTALL)
                 for m in matches:
-                    d1, m1_str, d2, m2_str, end_year = m.groups()
-                    m1, m2 = maanden.get(m1_str.lower()), maanden.get(m2_str.lower())
-                    end_year = int(end_year)
+                    d1, m1_str, d2, m2_str, ey_str = m.groups()
+                    ey = int(ey_str)
+                    m2 = maanden_dict.get(m2_str.lower())
+                    # Als de eerste maand ontbreekt, gebruik de tweede
+                    m1 = maanden_dict.get(m1_str.lower()) if (m1_str and m1_str.lower() in maanden_dict) else m2
                     
                     if m1 and m2:
-                        start_year = end_year
-                        if m1 > m2: # bijv. Dec -> Jan
-                            start_year = end_year - 1
+                        sy = ey
+                        if m1 > m2: sy = ey - 1
                         
-                        # Alleen toevoegen als het in het gevraagde jaar valt
-                        if start_year == jaar or end_year == jaar:
-                            try:
-                                v_ranges.append({
-                                    'start': datetime.date(start_year, m1, int(d1)).isoformat(), 
-                                    'end': datetime.date(end_year, m2, int(d2)).isoformat(), 
-                                    'name': v_name
-                                })
-                            except ValueError: continue
+                        if sy == jaar or ey == jaar:
+                            v_range = {
+                                'start': datetime.date(sy, m1, int(d1)).isoformat(), 
+                                'end': datetime.date(ey, m2, int(d2)).isoformat(), 
+                                'name': v_name
+                            }
+                            # Vermijd duplicaten
+                            v_key = (v_range['start'], v_range['end'], v_range['name'])
+                            if v_key not in seen:
+                                v_ranges.append(v_range)
+                                seen.add(v_key)
     except Exception as e:
         print(f"Scraping error: {e}")
     

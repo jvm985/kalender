@@ -15,6 +15,9 @@ echo "--- 🚀 Container herstarten ---"
 sudo docker stop $APP_NAME || true
 sudo docker rm $APP_NAME || true
 
+# Verwijder de cache file in het volume (als die bestaat)
+sudo docker run --rm -v kalender_data:/data busybox rm -f /data/kalender_cache.json
+
 sudo docker run -d \
     --name $APP_NAME \
     --restart always \
