@@ -16,7 +16,6 @@ from google.auth.transport import requests as google_requests
 from itsdangerous import URLSafeTimedSerializer
 
 app = Flask(__name__)
-# Gebruik een vaste secret key voor sessie-persistentie na herstart
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'kalender-secret-123')
 serializer = URLSafeTimedSerializer(app.secret_key)
 
@@ -27,12 +26,12 @@ app.config.update(
     SESSION_COOKIE_SAMESITE='Lax',
 )
 
-# Zorg dat Flask HTTPS begrijpt achter Nginx en Docker
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
 
 @app.after_request
 def add_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
+    # Sta toe dat de site zichzelf inbedt
     response.headers['Content-Security-Policy'] = "frame-ancestors 'self';"
     return response
 
@@ -79,12 +78,10 @@ def get_week_num(y, m, d):
     return datetime.date(y, m, d).isocalendar()[1]
 
 def load_all_vlaanderen_data():
-    """Scraapt alle beschikbare schooljaren en feestdagen van Vlaanderen.be"""
     if os.path.exists(CACHE_FILE):
         if (datetime.datetime.now() - datetime.datetime.fromtimestamp(os.path.getmtime(CACHE_FILE))).days < 7:
             try:
-                with open(CACHE_FILE, 'r') as f:
-                    return json.load(f)
+                with open(CACHE_FILE, 'r') as f: return json.load(f)
             except: pass
 
     url = "https://www.vlaanderen.be/onderwijs-en-vorming/wat-mag-en-moet-op-school/schoolvakanties-vrije-dagen-en-afwezigheden/schoolvakanties"
@@ -96,70 +93,46 @@ def load_all_vlaanderen_data():
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             content = r.text
-            # Secties splitsen op schooljaar koppen
-            # Robuustere split: zoek naar jaartallen met de juiste prefix
             split_regex = r'(?:Schooljaar|Schoolvakanties)\s*(\d{4}-\d{4})'
             sections = re.split(split_regex, content, flags=re.IGNORECASE)
-            
-            seen_ranges = set()
-            seen_events = set()
-
-            # De intro tekst negeren, beginnen bij de eerste match (paren van jaar-label, content)
+            seen_ranges = set(); seen_events = set()
             for i in range(1, len(sections), 2):
                 sj_content = sections[i+1]
                 items = re.findall(r'<li>(.*?)</li>', sj_content, re.DOTALL)
                 for item in items:
                     clean_item = re.sub(r'<.*?>', '', item).strip()
                     if not clean_item: continue
-                    
-                    # Range match (bijv. van 1 juli tot 31 augustus 2026)
                     range_match = re.search(r'^(.*?):\s*(?:van\s+)?.*?\b(\d+)\s+([a-z]+)?.*?\b(\d+)\s+([a-z]+)\s+(\d{4})', clean_item, re.IGNORECASE)
                     if range_match:
                         name, d1, m1_str, d2, m2_str, ey_str = range_match.groups()
-                        ey = int(ey_str)
-                        m2 = maanden_dict.get(m2_str.lower())
+                        ey = int(ey_str); m2 = maanden_dict.get(m2_str.lower())
                         m1 = maanden_dict.get(m1_str.lower()) if (m1_str and m1_str.lower() in maanden_dict) else m2
                         if m1 and m2:
                             sy = ey
                             if m1 > m2: sy = ey - 1
                             r_data = {"start": f"{sy}-{m1:02d}-{int(d1):02d}", "end": f"{ey}-{m2:02d}-{int(d2):02d}", "name": name.strip()}
-                            r_key = (r_data["start"], r_data["end"], r_data["name"])
-                            if r_key not in seen_ranges:
-                                data["ranges"].append(r_data)
-                                seen_ranges.add(r_key)
+                            if (r_data["start"], r_data["end"], r_data["name"]) not in seen_ranges:
+                                data["ranges"].append(r_data); seen_ranges.add((r_data["start"], r_data["end"], r_data["name"]))
                         continue
-
-                    # Losse dag match
                     day_match = re.search(r'^(.*?):\s*.*?\b(\d+)\s+([a-z]+)\s+(\d{4})', clean_item, re.IGNORECASE)
                     if day_match:
-                        name, d, m_str, y_str = day_match.groups()
-                        m = maanden_dict.get(m_str.lower())
+                        name, d, m_str, y_str = day_match.groups(); m = maanden_dict.get(m_str.lower())
                         if m:
                             e_data = {"date": f"{int(y_str)}-{m:02d}-{int(d):02d}", "name": name.strip()}
-                            e_key = (e_data["date"], e_data["name"])
-                            if e_key not in seen_events:
-                                data["events"].append(e_data)
-                                seen_events.add(e_key)
-            
-            with open(CACHE_FILE, 'w') as f:
-                json.dump(data, f)
-    except Exception as e:
-        print(f"Scraping error: {e}")
-        
+                            if (e_data["date"], e_data["name"]) not in seen_events:
+                                data["events"].append(e_data); seen_events.add((e_data["date"], e_data["name"]))
+            with open(CACHE_FILE, 'w') as f: json.dump(data, f)
+    except Exception as e: print(f"Scraping error: {e}")
     return data
 
 def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=True, show_holidays=True, show_vacations=True, is_schoolyear=False, user_id=None):
     all_data = load_all_vlaanderen_data()
-    day_events = {}
-    holiday_dates = set()
-    v_ranges = []
+    day_events = {}; holiday_dates = set(); v_ranges = []
     target_years = [jaar, jaar + 1] if is_schoolyear else [jaar]
     
     if show_vacations:
         for r in all_data["ranges"]:
-            s_date = datetime.date.fromisoformat(r['start'])
-            e_date = datetime.date.fromisoformat(r['end'])
-            # Check overlap met target jaren
+            s_date = datetime.date.fromisoformat(r['start']); e_date = datetime.date.fromisoformat(r['end'])
             if any(y in [s_date.year, e_date.year] for y in target_years):
                 v_ranges.append({'start': s_date, 'end': e_date, 'name': r['name']})
 
@@ -171,8 +144,7 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
                 if y not in day_events: day_events[y] = {}
                 if m not in day_events[y]: day_events[y][m] = {}
                 if d not in day_events[y][m]: day_events[y][m][d] = []
-                day_events[y][m][d].append(e['name'])
-                holiday_dates.add((y, m, d))
+                day_events[y][m][d].append(e['name']); holiday_dates.add((y, m, d))
 
     actual_user_id = user_id or (current_user.id if current_user.is_authenticated else None)
     if show_birthdays and actual_user_id:
@@ -187,14 +159,12 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
     pw_mm, ph_mm = (420, 297) if paper_size == 'A3' else (297, 210)
     if orientation == 'portrait': pw_mm, ph_mm = ph_mm, pw_mm
     pw_pt, ph_pt = pw_mm * MM_TO_PT, ph_mm * MM_TO_PT
-    margin_mm = 15
-    grid_w_mm, grid_h_mm = pw_mm - 2 * margin_mm, ph_mm - 2 * margin_mm - 30
+    margin_mm = 15; grid_w_mm, grid_h_mm = pw_mm - 2 * margin_mm, ph_mm - 2 * margin_mm - 30
     cell_w_pt, cell_h_pt = (grid_w_mm / 7) * MM_TO_PT, (grid_h_mm / 6) * MM_TO_PT
     
     output = io.BytesIO()
     surface = cairo.PDFSurface(output, pw_pt, ph_pt)
     ctx = cairo.Context(surface)
-    
     months_to_draw = []
     if is_schoolyear:
         for m in range(9, 13): months_to_draw.append((jaar, m))
@@ -216,7 +186,6 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
         ctx.set_font_size(14 if paper_size == 'A3' else 10)
         for i, dn in enumerate(DAY_NAMES):
             _, _, w, _, _, _ = ctx.text_extents(dn); ctx.move_to(sx + i * cell_w_pt + cell_w_pt/2 - w/2, sy - 4 * MM_TO_PT); ctx.show_text(dn)
-        
         fday = datetime.date(cur_year, month, 1); fwd = fday.weekday()
         for k in range(42):
             col, row = k % 7, k // 7; x, y = sx + col * cell_w_pt, sy + row * cell_h_pt; cdate = fday + datetime.timedelta(days=k - fwd)
@@ -250,8 +219,7 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
 @app.route('/api/auth/google', methods=['POST'])
 def google_auth():
     try:
-        data = request.get_json()
-        token = data.get('token')
+        data = request.get_json(); token = data.get('token')
         if not token: return {"error": "Geen token ontvangen"}, 400
         idinfo = id_token.verify_oauth2_token(token, google_requests.Request(), GOOGLE_CLIENT_ID)
         user = User.query.filter_by(google_id=idinfo['sub']).first()
@@ -297,25 +265,18 @@ def delete_birthday(id):
     b = Birthday.query.get(id)
     if b and b.user_id == current_user.id: db.session.delete(b); db.session.commit()
     return redirect('/')
+
 @app.route('/pdf_preview')
 def pdf_preview():
-    # Gebruik token voor identificatie om cookie-partitionering issues te voorkomen
-    token = request.args.get('token')
-    user_id = None
+    token = request.args.get('token'); user_id = None
     if token:
         try: user_id = serializer.loads(token, max_age=600)
         except: pass
-
     pdf = generate_pdf(int(request.args.get('year', 2026)), request.args.get('paper_size', 'A3'), request.args.get('orientation', 'landscape'), request.args.get('show_birthdays') == 'true', request.args.get('show_holidays') == 'true', request.args.get('show_vacations') == 'true', request.args.get('is_schoolyear') == 'true', user_id=user_id)
     response = make_response(send_file(pdf, mimetype='application/pdf'))
-    response.headers['Content-Disposition'] = 'inline; filename="preview.pdf"'
-
-    # Forceer dat er GEEN cookies worden gezet in de respons voor de preview
-    if 'Set-Cookie' in response.headers:
-        del response.headers['Set-Cookie']
-
+    # Geen cookies meesturen voor de preview context
+    if 'Set-Cookie' in response.headers: del response.headers['Set-Cookie']
     return response
-
 
 @app.route('/generate', methods=['POST'])
 def generate():
