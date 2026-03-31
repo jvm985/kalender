@@ -82,8 +82,10 @@ def load_all_vlaanderen_data():
     """Scraapt alle beschikbare schooljaren en feestdagen van Vlaanderen.be"""
     if os.path.exists(CACHE_FILE):
         if (datetime.datetime.now() - datetime.datetime.fromtimestamp(os.path.getmtime(CACHE_FILE))).days < 7:
-            with open(CACHE_FILE, 'r') as f:
-                return json.load(f)
+            try:
+                with open(CACHE_FILE, 'r') as f:
+                    return json.load(f)
+            except: pass
 
     url = "https://www.vlaanderen.be/onderwijs-en-vorming/wat-mag-en-moet-op-school/schoolvakanties-vrije-dagen-en-afwezigheden/schoolvakanties"
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -94,8 +96,13 @@ def load_all_vlaanderen_data():
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             content = r.text
-            # Stap 1: Vind alle secties per schooljaar
+            # Secties splitsen op schooljaar koppen
             sections = re.split(r'<(?:h[234]|span)[^>]*>(?:\s*Schooljaar\s*|Schoolvakanties\s*)?(\d{4}-\d{4}).*?</(?:h[234]|span)>', content, flags=re.IGNORECASE)
+            
+            seen_ranges = set()
+            seen_events = set()
+
+            # De intro tekst negeren, beginnen bij de eerste match
             for i in range(1, len(sections), 2):
                 sj_content = sections[i+1]
                 items = re.findall(r'<li>(.*?)</li>', sj_content, re.DOTALL)
@@ -103,9 +110,7 @@ def load_all_vlaanderen_data():
                     clean_item = re.sub(r'<.*?>', '', item).strip()
                     if not clean_item: continue
                     
-                    # Verbeterde Range Regex: zoekt naar twee getallen en een jaar
-                    # Bijv: "Herfstvakantie: van 27 oktober tot en met 2 november 2025"
-                    # Of: "Hemelvaart: donderdag 14 en vrijdag 15 mei 2026"
+                    # Range match (bijv. van 1 juli tot 31 augustus 2026)
                     range_match = re.search(r'^(.*?):\s*(?:van\s+)?.*?\b(\d+)\s+([a-z]+)?.*?\b(\d+)\s+([a-z]+)\s+(\d{4})', clean_item, re.IGNORECASE)
                     if range_match:
                         name, d1, m1_str, d2, m2_str, ey_str = range_match.groups()
@@ -115,18 +120,30 @@ def load_all_vlaanderen_data():
                         if m1 and m2:
                             sy = ey
                             if m1 > m2: sy = ey - 1
-                            data["ranges"].append({"start": datetime.date(sy, m1, int(d1)).isoformat(), "end": datetime.date(ey, m2, int(d2)).isoformat(), "name": name.strip()})
+                            r_data = {"start": f"{sy}-{m1:02d}-{int(d1):02d}", "end": f"{ey}-{m2:02d}-{int(d2):02d}", "name": name.strip()}
+                            r_key = (r_data["start"], r_data["end"], r_data["name"])
+                            if r_key not in seen_ranges:
+                                data["ranges"].append(r_data)
+                                seen_ranges.add(r_key)
                         continue
 
-                    # Verbeterde Dag Regex: zoekt naar een getal, maand en jaar
+                    # Losse dag match
                     day_match = re.search(r'^(.*?):\s*.*?\b(\d+)\s+([a-z]+)\s+(\d{4})', clean_item, re.IGNORECASE)
                     if day_match:
                         name, d, m_str, y_str = day_match.groups()
                         m = maanden_dict.get(m_str.lower())
-                        if m: data["events"].append({"date": datetime.date(int(y_str), m, int(d)).isoformat(), "name": name.strip()})
+                        if m:
+                            e_data = {"date": f"{int(y_str)}-{m:02d}-{int(d):02d}", "name": name.strip()}
+                            e_key = (e_data["date"], e_data["name"])
+                            if e_key not in seen_events:
+                                data["events"].append(e_data)
+                                seen_events.add(e_key)
             
-            with open(CACHE_FILE, 'w') as f: json.dump(data, f)
-    except Exception as e: print(f"Scraping error: {e}")
+            with open(CACHE_FILE, 'w') as f:
+                json.dump(data, f)
+    except Exception as e:
+        print(f"Scraping error: {e}")
+        
     return data
 
 def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=True, show_holidays=True, show_vacations=True, is_schoolyear=False, user_id=None):
@@ -140,7 +157,8 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
         for r in all_data["ranges"]:
             s_date = datetime.date.fromisoformat(r['start'])
             e_date = datetime.date.fromisoformat(r['end'])
-            if s_date.year in target_years or e_date.year in target_years:
+            # Check overlap met target jaren
+            if any(y in [s_date.year, e_date.year] for y in target_years):
                 v_ranges.append({'start': s_date, 'end': e_date, 'name': r['name']})
 
     if show_holidays:
@@ -200,7 +218,7 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
         fday = datetime.date(cur_year, month, 1); fwd = fday.weekday()
         for k in range(42):
             col, row = k % 7, k // 7; x, y = sx + col * cell_w_pt, sy + row * cell_h_pt; cdate = fday + datetime.timedelta(days=k - fwd)
-            is_holiday = show_holidays and (cur_year, cdate.month, cdate.day) in holiday_dates
+            is_holiday = show_holidays and (cdate.year, cdate.month, cdate.day) in holiday_dates
             active_vacations = [r for r in v_ranges if r['start'] <= cdate <= r['end']]
             has_line = len(active_vacations) > 0 or is_holiday
             if has_line:
