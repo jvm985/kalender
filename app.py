@@ -295,19 +295,25 @@ def delete_birthday(id):
     b = Birthday.query.get(id)
     if b and b.user_id == current_user.id: db.session.delete(b); db.session.commit()
     return redirect('/')
-
 @app.route('/pdf_preview')
 def pdf_preview():
+    # Gebruik token voor identificatie om cookie-partitionering issues te voorkomen
     token = request.args.get('token')
     user_id = None
     if token:
         try: user_id = serializer.loads(token, max_age=600)
         except: pass
-    
+
     pdf = generate_pdf(int(request.args.get('year', 2026)), request.args.get('paper_size', 'A3'), request.args.get('orientation', 'landscape'), request.args.get('show_birthdays') == 'true', request.args.get('show_holidays') == 'true', request.args.get('show_vacations') == 'true', request.args.get('is_schoolyear') == 'true', user_id=user_id)
     response = make_response(send_file(pdf, mimetype='application/pdf'))
     response.headers['Content-Disposition'] = 'inline; filename="preview.pdf"'
+
+    # Forceer dat er GEEN cookies worden gezet in de respons voor de preview
+    if 'Set-Cookie' in response.headers:
+        del response.headers['Set-Cookie']
+
     return response
+
 
 @app.route('/generate', methods=['POST'])
 def generate():

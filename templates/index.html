@@ -215,7 +215,9 @@
                 updatePreview();
             }
 
-            function updatePreview() {
+            let currentBlobUrl = null;
+
+            async function updatePreview() {
                 const year = document.getElementById('yearValue').value;
                 const size = document.getElementById('paper_size').value;
                 const orient = document.getElementById('orientation').value;
@@ -225,7 +227,6 @@
                 const isSchool = document.getElementById('id_type_school').checked;
                 const token = "{{ preview_token }}";
 
-                // Update de tekstweergave IN het vakje
                 const display = document.getElementById('yearDisplay');
                 if (isSchool) {
                     display.value = `${year} - ${parseInt(year) + 1}`;
@@ -234,7 +235,22 @@
                 }
 
                 const url = `/pdf_preview?year=${year}&paper_size=${size}&orientation=${orient}&show_birthdays=${bdays}&show_holidays=${holidays}&show_vacations=${vacations}&is_schoolyear=${isSchool}&token=${token}&t=${new Date().getTime()}`;
-                previewIframe.src = url;
+                
+                try {
+                    // Haal de PDF op ZONDER cookies te sturen (credentials: omit)
+                    const response = await fetch(url, { credentials: 'omit' });
+                    if (!response.ok) throw new Error('Preview mislukt');
+                    
+                    const blob = await response.blob();
+                    
+                    // Ruim de oude URL op om geheugenlekken te voorkomen
+                    if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+                    
+                    currentBlobUrl = URL.createObjectURL(blob);
+                    previewIframe.src = currentBlobUrl;
+                } catch (err) {
+                    console.error("Preview error:", err);
+                }
             }
 
             formElements.forEach(id => {
