@@ -152,8 +152,18 @@ def load_data(jaar):
 def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=True, show_holidays=True, show_vacations=True):
     online_data = load_data(jaar)
     day_events = {}
+    holiday_dates = set()
+    
     if show_holidays:
-        day_events = {int(m): {int(d): v for d, v in days.items()} for m, days in online_data['events'].items()}
+        # Normaliseer naar integer keys en vul holiday_dates set
+        for m_str, days in online_data['events'].items():
+            m = int(m_str)
+            day_events[m] = {}
+            for d_str, v in days.items():
+                d = int(d_str)
+                day_events[m][d] = v
+                holiday_dates.add((m, d))
+    
     v_ranges = []
     if show_vacations:
         for r in online_data['ranges']:
@@ -199,10 +209,7 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
             col, row = k % 7, k // 7; x, y = sx + col * cell_w_pt, sy + row * cell_h_pt; cdate = fday + datetime.timedelta(days=k - fwd)
             
             # Check of het een vakantie of feestdag is voor de markeerstift
-            is_holiday = show_holidays and cdate.month in day_events and cdate.day in day_events[cdate.month]
-            # (We checken alleen de originele feestdagen, niet de verjaardagen die later zijn toegevoegd)
-            # Eigenlijk is het simpeler om te checken in online_data['events']
-            is_holiday = show_holidays and str(cdate.month) in online_data['events'] and str(cdate.day) in online_data['events'][str(cdate.month)]
+            is_holiday = show_holidays and (cdate.month, cdate.day) in holiday_dates
             
             active_vacations = [r for r in v_ranges if r['start'] <= cdate <= r['end']]
             has_line = len(active_vacations) > 0 or is_holiday
