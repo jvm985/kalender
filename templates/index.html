@@ -100,6 +100,14 @@
                     <form id="optionsForm" action="/generate" method="POST">
                         <div class="form-group">
                             <label>Jaar</label>
+                            <div style="display: flex; gap: 10px; margin-bottom: 8px;">
+                                <label style="font-weight: normal; display: flex; align-items: center; gap: 4px;">
+                                    <input type="radio" name="year_type" value="calendar" checked id="type_calendar"> Kalender
+                                </label>
+                                <label style="font-weight: normal; display: flex; align-items: center; gap: 4px;">
+                                    <input type="radio" name="year_type" value="school" id="type_school"> School
+                                </label>
+                            </div>
                             <input type="number" name="year" id="year" value="{{ year }}" min="1900" max="2100">
                         </div>
                         <div class="form-group">
@@ -191,7 +199,7 @@
         </div>
 
         <script>
-            const formElements = ['year', 'paper_size', 'orientation', 'show_birthdays', 'show_holidays', 'show_vacations'];
+            const formElements = ['year', 'paper_size', 'orientation', 'show_birthdays', 'show_holidays', 'show_vacations', 'type_calendar', 'type_school'];
             const previewIframe = document.getElementById('pdfPreview');
 
             function updatePreview() {
@@ -201,8 +209,9 @@
                 const bdays = document.getElementById('show_birthdays').checked;
                 const holidays = document.getElementById('show_holidays').checked;
                 const vacations = document.getElementById('show_vacations').checked;
+                const isSchool = document.getElementById('type_school').checked;
 
-                const url = `/pdf_preview?year=${year}&paper_size=${size}&orientation=${orient}&show_birthdays=${bdays}&show_holidays=${holidays}&show_vacations=${vacations}&t=${new Date().getTime()}`;
+                const url = `/pdf_preview?year=${year}&paper_size=${size}&orientation=${orient}&show_birthdays=${bdays}&show_holidays=${holidays}&show_vacations=${vacations}&is_schoolyear=${isSchool}&t=${new Date().getTime()}`;
                 previewIframe.src = url;
             }
 

@@ -149,35 +149,40 @@ def load_data(jaar):
     with open(CACHE_FILE, 'w') as f: json.dump(cache, f)
     return data
 
-def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=True, show_holidays=True, show_vacations=True):
-    online_data = load_data(jaar)
-    day_events = {}
-    holiday_dates = set()
+def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=True, show_holidays=True, show_vacations=True, is_schoolyear=False):
+    # Als het een schooljaar is, hebben we data nodig van jaar en jaar+1
+    years_to_load = [jaar, jaar + 1] if is_schoolyear else [jaar]
     
-    if show_holidays:
-        # Normaliseer naar integer keys en vul holiday_dates set
-        for m_str, days in online_data['events'].items():
-            m = int(m_str)
-            day_events[m] = {}
-            for d_str, v in days.items():
-                d = int(d_str)
-                day_events[m][d] = v
-                holiday_dates.add((m, d))
-    
+    day_events = {} # format: {year: {month: {day: [events]}}}
+    holiday_dates = set() # format: (year, month, day)
     v_ranges = []
-    if show_vacations:
-        for r in online_data['ranges']:
-            s_date = datetime.date.fromisoformat(r['start'])
-            e_date = datetime.date.fromisoformat(r['end'])
-            # Alleen toevoegen als de vakantie overlap heeft met het gevraagde jaar
-            if s_date.year == jaar or e_date.year == jaar:
-                v_ranges.append({'start': s_date, 'end': e_date, 'name': r['name']})
     
+    for y in years_to_load:
+        online_data = load_data(y)
+        if show_holidays:
+            for m_str, days in online_data['events'].items():
+                m = int(m_str)
+                if y not in day_events: day_events[y] = {}
+                if m not in day_events[y]: day_events[y][m] = {}
+                for d_str, v in days.items():
+                    d = int(d_str)
+                    day_events[y][m][d] = v
+                    holiday_dates.add((y, m, d))
+        
+        if show_vacations:
+            for r in online_data['ranges']:
+                s_date = datetime.date.fromisoformat(r['start'])
+                e_date = datetime.date.fromisoformat(r['end'])
+                v_ranges.append({'start': s_date, 'end': e_date, 'name': r['name']})
+
     if show_birthdays and current_user.is_authenticated:
-        for b in Birthday.query.filter_by(user_id=current_user.id).all():
-            if b.month not in day_events: day_events[b.month] = {}
-            if b.day not in day_events[b.month]: day_events[b.month][b.day] = []
-            day_events[b.month][b.day].append(b.name)
+        all_birthdays = Birthday.query.filter_by(user_id=current_user.id).all()
+        for y in years_to_load:
+            if y not in day_events: day_events[y] = {}
+            for b in all_birthdays:
+                if b.month not in day_events[y]: day_events[y][b.month] = {}
+                if b.day not in day_events[y][b.month]: day_events[y][b.month][b.day] = []
+                day_events[y][b.month][b.day].append(b.name)
 
     pw_mm, ph_mm = (420, 297) if paper_size == 'A3' else (297, 210)
     if orientation == 'portrait': pw_mm, ph_mm = ph_mm, pw_mm
@@ -189,7 +194,18 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
     output = io.BytesIO()
     surface = cairo.PDFSurface(output, pw_pt, ph_pt)
     ctx = cairo.Context(surface)
-    for month in range(1, 13):
+    
+    # Bepaal de maanden en jaren die we gaan tekenen
+    months_to_draw = []
+    if is_schoolyear:
+        # Sept t/m Dec van jaar, Jan t/m Aug van jaar+1
+        for m in range(9, 13): months_to_draw.append((jaar, m))
+        for m in range(1, 9): months_to_draw.append((jaar + 1, m))
+    else:
+        # Jan t/m Dec van jaar
+        for m in range(1, 13): months_to_draw.append((jaar, m))
+
+    for cur_year, month in months_to_draw:
         ctx.set_source_rgb(1, 1, 1); ctx.paint()
         sx, sy = margin_mm * MM_TO_PT, margin_mm * MM_TO_PT + 25 * MM_TO_PT
         ctx.set_source_rgb(0, 0, 0); ctx.set_line_width(1.0)
@@ -198,18 +214,19 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
         ctx.stroke()
         ctx.select_font_face("LM Sans 10", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         ctx.set_font_size(24 if paper_size == 'A3' else 18)
-        txt = f"{MONTH_NAMES[month]} {jaar}"
+        txt = f"{MONTH_NAMES[month]} {cur_year}"
         _, _, w, _, _, _ = ctx.text_extents(txt)
         ctx.move_to(sx + (7*cell_w_pt)/2 - w/2, sy - 10 * MM_TO_PT); ctx.show_text(txt)
         ctx.set_font_size(14 if paper_size == 'A3' else 10)
         for i, dn in enumerate(DAY_NAMES):
             _, _, w, _, _, _ = ctx.text_extents(dn); ctx.move_to(sx + i * cell_w_pt + cell_w_pt/2 - w/2, sy - 4 * MM_TO_PT); ctx.show_text(dn)
-        fday = datetime.date(jaar, month, 1); fwd = fday.weekday()
+        
+        fday = datetime.date(cur_year, month, 1); fwd = fday.weekday()
         for k in range(42):
             col, row = k % 7, k // 7; x, y = sx + col * cell_w_pt, sy + row * cell_h_pt; cdate = fday + datetime.timedelta(days=k - fwd)
             
             # Check of het een vakantie of feestdag is voor de markeerstift
-            is_holiday = show_holidays and (cdate.month, cdate.day) in holiday_dates
+            is_holiday = show_holidays and (cdate.year, cdate.month, cdate.day) in holiday_dates
             
             active_vacations = [r for r in v_ranges if r['start'] <= cdate <= r['end']]
             has_line = len(active_vacations) > 0 or is_holiday
@@ -217,11 +234,9 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
             if has_line:
                 ctx.set_source_rgb(0.2, 0.6, 0.8)
                 ctx.set_line_width(1.5 if paper_size == 'A3' else 1.0)
-                # Lijn net onder het nummer
                 ly = y + (24 if paper_size == 'A3' else 18)
                 ctx.move_to(x + 2*MM_TO_PT, ly); ctx.line_to(x + cell_w_pt - 2*MM_TO_PT, ly); ctx.stroke()
                 
-                # Toon vakantie naam indien van toepassing
                 for r in active_vacations:
                     if cdate == r['start']:
                         ctx.set_font_size(8 if paper_size == 'A3' else 6)
@@ -236,16 +251,15 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
                 ctx.move_to(sx - w - 4*MM_TO_PT, y + 4*MM_TO_PT - yb); ctx.show_text(wn_txt)
 
             if cdate.month == month:
-                evs = day_events.get(cdate.month, {}).get(cdate.day, [])
+                evs = day_events.get(cur_year, {}).get(cdate.month, {}).get(cdate.day, [])
                 if evs:
                     ctx.set_source_rgb(0,0,0); ctx.set_font_size(9 if paper_size == 'A3' else 7)
-                    # Start tekst lager als er een lijn staat
                     y_offset = (12*MM_TO_PT if has_line else 7*MM_TO_PT)
                     for idx, name in enumerate(evs): 
                         ctx.move_to(x + 3*MM_TO_PT, y + y_offset + idx * (11 if paper_size == 'A3' else 8))
                         ctx.show_text(name)
         ctx.show_page()
-    ctx.show_page(); surface.finish(); output.seek(0)
+    surface.finish(); output.seek(0)
     return output
 
 # --- Google Auth (Robuuste methode met ID Token) ---
@@ -317,7 +331,7 @@ def delete_birthday(id):
 
 @app.route('/pdf_preview')
 def pdf_preview():
-    pdf = generate_pdf(int(request.args.get('year', 2026)), request.args.get('paper_size', 'A3'), request.args.get('orientation', 'landscape'), request.args.get('show_birthdays') == 'true', request.args.get('show_holidays') == 'true', request.args.get('show_vacations') == 'true')
+    pdf = generate_pdf(int(request.args.get('year', 2026)), request.args.get('paper_size', 'A3'), request.args.get('orientation', 'landscape'), request.args.get('show_birthdays') == 'true', request.args.get('show_holidays') == 'true', request.args.get('show_vacations') == 'true', request.args.get('is_schoolyear') == 'true')
     
     response = make_response(send_file(pdf, mimetype='application/pdf'))
     # Geef expliciet toestemming voor inbedden en voorkom MIME-sniffing
@@ -330,7 +344,7 @@ def pdf_preview():
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    pdf = generate_pdf(int(request.form.get('year', 2026)), request.form.get('paper_size', 'A3'), request.form.get('orientation', 'landscape'), 'show_birthdays' in request.form, 'show_holidays' in request.form, 'show_vacations' in request.form)
+    pdf = generate_pdf(int(request.form.get('year', 2026)), request.form.get('paper_size', 'A3'), request.form.get('orientation', 'landscape'), 'show_birthdays' in request.form, 'show_holidays' in request.form, 'show_vacations' in request.form, 'is_schoolyear' in request.form)
     return send_file(pdf, download_name=f"kalender.pdf", as_attachment=True)
 
 # Initialize database tables
