@@ -237,17 +237,20 @@
                 const url = `/pdf_preview?year=${year}&paper_size=${size}&orientation=${orient}&show_birthdays=${bdays}&show_holidays=${holidays}&show_vacations=${vacations}&is_schoolyear=${isSchool}&token=${token}&t=${new Date().getTime()}`;
                 
                 try {
-                    // Haal de PDF op ZONDER cookies te sturen (credentials: omit)
+                    // Haal de PDF op ZONDER cookies te sturen
                     const response = await fetch(url, { credentials: 'omit' });
                     if (!response.ok) throw new Error('Preview mislukt');
                     
                     const blob = await response.blob();
                     
-                    // Ruim de oude URL op om geheugenlekken te voorkomen
-                    if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+                    // Converteer Blob naar Base64 Data URL om docBaseUrl waarschuwingen te fixen
+                    const reader = new FileReader();
+                    reader.onloadend = function() {
+                        previewIframe.src = reader.result;
+                    };
+                    reader.readAsDataURL(blob);
                     
-                    currentBlobUrl = URL.createObjectURL(blob);
-                    previewIframe.src = currentBlobUrl;
+                    if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
                 } catch (err) {
                     console.error("Preview error:", err);
                 }
