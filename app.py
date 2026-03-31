@@ -361,8 +361,7 @@ def pdf_preview():
     pdf = generate_pdf(int(request.args.get('year', 2026)), request.args.get('paper_size', 'A3'), request.args.get('orientation', 'landscape'), request.args.get('show_birthdays') == 'true', request.args.get('show_holidays') == 'true', request.args.get('show_vacations') == 'true', request.args.get('is_schoolyear') == 'true')
     
     response = make_response(send_file(pdf, mimetype='application/pdf'))
-    # Geef expliciet toestemming voor inbedden en voorkom MIME-sniffing
-    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    # Voorkom MIME-sniffing
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Access-Control-Allow-Origin'] = request.host_url.rstrip('/')
     # Forceer dat de browser het als een apart document behandelt in de iframe context
