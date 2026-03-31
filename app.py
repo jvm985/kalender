@@ -103,20 +103,43 @@ def load_data(jaar):
     
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}
-        r = requests.get("https://onderwijs.vlaanderen.be/nl/schoolvakanties", headers=headers, timeout=5)
+        url = "https://www.vlaanderen.be/onderwijs-en-vorming/wat-mag-en-moet-op-school/schoolvakanties-vrije-dagen-en-afwezigheden/schoolvakanties"
+        r = requests.get(url, headers=headers, timeout=5)
         if r.status_code == 200:
             content = r.text
-            patterns = [(r"Herfstvakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Herfstvakantie"), (r"Kerstvakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Kerstvakantie"), (r"Krokusvakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Krokusvakantie"), (r"Paasvakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Paasvakantie"), (r"Zomervakantie.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+({jaar})", "Zomervakantie")]
+            # Flexibele patronen voor verschillende formats
+            # We zoeken nu specifieker naar de datumcombinaties
+            patterns = [
+                (r"Herfstvakantie:.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+(\d{4})", "Herfstvakantie"),
+                (r"Kerstvakantie:.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+(\d{4})", "Kerstvakantie"),
+                (r"Krokusvakantie:.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+(\d{4})", "Krokusvakantie"),
+                (r"Paasvakantie:.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+(\d{4})", "Paasvakantie"),
+                (r"Zomervakantie:.*?(\d+)\s+(\w+).*?(\d+)\s+(\w+)\s+(\d{4})", "Zomervakantie")
+            ]
             maanden = {"januari":1, "februari":2, "maart":3, "april":4, "mei":5, "juni":6, "juli":7, "augustus":8, "september":9, "oktober":10, "november":11, "december":12}
             for p_raw, v_name in patterns:
-                p = p_raw.format(jaar=jaar)
-                matches = re.finditer(p, content, re.IGNORECASE | re.DOTALL)
+                matches = re.finditer(p_raw, content, re.IGNORECASE | re.DOTALL)
                 for m in matches:
-                    d1, m1_str, d2, m2_str, _ = m.groups()
+                    d1, m1_str, d2, m2_str, end_year = m.groups()
                     m1, m2 = maanden.get(m1_str.lower()), maanden.get(m2_str.lower())
+                    end_year = int(end_year)
+                    
                     if m1 and m2:
-                        v_ranges.append({'start': datetime.date(jaar, m1, int(d1)).isoformat(), 'end': datetime.date(jaar, m2, int(d2)).isoformat(), 'name': v_name})
-    except: pass
+                        start_year = end_year
+                        if m1 > m2: # bijv. Dec -> Jan
+                            start_year = end_year - 1
+                        
+                        # Alleen toevoegen als het in het gevraagde jaar valt
+                        if start_year == jaar or end_year == jaar:
+                            try:
+                                v_ranges.append({
+                                    'start': datetime.date(start_year, m1, int(d1)).isoformat(), 
+                                    'end': datetime.date(end_year, m2, int(d2)).isoformat(), 
+                                    'name': v_name
+                                })
+                            except ValueError: continue
+    except Exception as e:
+        print(f"Scraping error: {e}")
     
     data = {"events": day_events, "ranges": v_ranges}
     cache = {}
@@ -135,7 +158,12 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
         day_events = {int(m): {int(d): v for d, v in days.items()} for m, days in online_data['events'].items()}
     v_ranges = []
     if show_vacations:
-        v_ranges = [{'start': datetime.date.fromisoformat(r['start']), 'end': datetime.date.fromisoformat(r['end']), 'name': r['name']} for r in online_data['ranges']]
+        for r in online_data['ranges']:
+            s_date = datetime.date.fromisoformat(r['start'])
+            e_date = datetime.date.fromisoformat(r['end'])
+            # Alleen toevoegen als de vakantie overlap heeft met het gevraagde jaar
+            if s_date.year == jaar or e_date.year == jaar:
+                v_ranges.append({'start': s_date, 'end': e_date, 'name': r['name']})
     
     if show_birthdays and current_user.is_authenticated:
         for b in Birthday.query.filter_by(user_id=current_user.id).all():
