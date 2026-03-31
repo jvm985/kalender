@@ -13,41 +13,27 @@ from authlib.integrations.flask_client import OAuth
 from werkzeug.middleware.proxy_fix import ProxyFix
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
+from itsdangerous import URLSafeTimedSerializer
 
 app = Flask(__name__)
 # Gebruik een vaste secret key voor sessie-persistentie na herstart
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'kalender-secret-123')
+serializer = URLSafeTimedSerializer(app.secret_key)
 
-# Sessie instellingen voor HTTPS en Iframe support
+# Sessie instellingen (Lax is prima voor same-site, token lost iframe issue op)
 app.config.update(
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE='None',  # Nodig voor cross-site context in iframes
+    SESSION_COOKIE_SAMESITE='Lax',
 )
 
 # Zorg dat Flask HTTPS begrijpt achter Nginx en Docker
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
 
 @app.after_request
-def add_headers(response):
-    # Voeg 'Partitioned' toe aan Set-Cookie headers voor iframe support (CHIPS)
-    cookies = response.headers.getlist('Set-Cookie')
-    if cookies:
-        response.headers.remove('Set-Cookie')
-        for cookie in cookies:
-            new_cookie = cookie
-            if 'Partitioned' not in cookie:
-                new_cookie += '; Partitioned'
-            # Zorg dat SameSite=None altijd aanwezig is als Partitioned gebruikt wordt
-            if 'SameSite=' not in new_cookie:
-                new_cookie += '; SameSite=None'
-            if 'Secure' not in new_cookie:
-                new_cookie += '; Secure'
-            response.headers.add('Set-Cookie', new_cookie)
-    
-    # Beveiligingsheaders voor iframes
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Content-Security-Policy'] = "frame-ancestors 'self';"
-    response.headers['Access-Control-Allow-Credentials'] = 'true'
     return response
 
 # Database Setup
@@ -63,19 +49,6 @@ db = SQLAlchemy(app)
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
-
-# OAuth Setup
-oauth = OAuth(app)
-GOOGLE_CLIENT_ID = '339058057860-i6ne31mqs27mqm2ulac7al9vi26pmgo1.apps.googleusercontent.com'
-GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', 'GOCSPX-missing-secret')
-
-google = oauth.register(
-    name='google',
-    client_id=GOOGLE_CLIENT_ID,
-    client_secret=GOOGLE_CLIENT_SECRET,
-    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-    client_kwargs={'scope': 'openid email profile'}
-)
 
 # Models
 class User(UserMixin, db.Model):
@@ -108,14 +81,12 @@ def get_week_num(y, m, d):
 def load_all_vlaanderen_data():
     """Scraapt alle beschikbare schooljaren en feestdagen van Vlaanderen.be"""
     if os.path.exists(CACHE_FILE):
-        # Cache voor 7 dagen
         if (datetime.datetime.now() - datetime.datetime.fromtimestamp(os.path.getmtime(CACHE_FILE))).days < 7:
             with open(CACHE_FILE, 'r') as f:
                 return json.load(f)
 
     url = "https://www.vlaanderen.be/onderwijs-en-vorming/wat-mag-en-moet-op-school/schoolvakanties-vrije-dagen-en-afwezigheden/schoolvakanties"
     headers = {'User-Agent': 'Mozilla/5.0'}
-    
     data = {"events": [], "ranges": []}
     maanden_dict = {"januari":1, "februari":2, "maart":3, "april":4, "mei":5, "juni":6, "juli":7, "augustus":8, "september":9, "oktober":10, "november":11, "december":12}
     
@@ -123,25 +94,13 @@ def load_all_vlaanderen_data():
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             content = r.text
-            # Stap 1: Vind alle secties per schooljaar (bijv. 2025-2026)
-            # We splitsen op de koppen
             sections = re.split(r'<(?:h[234]|span)[^>]*>(?:\s*Schooljaar\s*|Schoolvakanties\s*)?(\d{4}-\d{4}).*?</(?:h[234]|span)>', content, flags=re.IGNORECASE)
-            
-            # sections[0] is de intro tekst
-            # daarna hebben we paren: [ "2025-2026", "sectie content", "2026-2027", "sectie content" ]
             for i in range(1, len(sections), 2):
-                sj_label = sections[i]
                 sj_content = sections[i+1]
-                
-                # Zoek alle <li> elementen in deze sectie
                 items = re.findall(r'<li>(.*?)</li>', sj_content, re.DOTALL)
                 for item in items:
-                    # Strip HTML tags
                     clean_item = re.sub(r'<.*?>', '', item).strip()
                     if not clean_item: continue
-                    
-                    # Match bereik: "Naam: van 27 oktober tot en met 2 november 2025"
-                    # Regex groepen: 1=Naam, 2=d1, 3=m1, 4=d2, 5=m2, 6=jaar
                     range_match = re.search(r'^(.*?):\s*van\s+.*?\b(\d+)\s+([a-z]+)?.*?\b(\d+)\s+([a-z]+)\s+(\d{4})', clean_item, re.IGNORECASE)
                     if range_match:
                         name, d1, m1_str, d2, m2_str, ey_str = range_match.groups()
@@ -151,51 +110,31 @@ def load_all_vlaanderen_data():
                         if m1 and m2:
                             sy = ey
                             if m1 > m2: sy = ey - 1
-                            data["ranges"].append({
-                                "start": datetime.date(sy, m1, int(d1)).isoformat(),
-                                "end": datetime.date(ey, m2, int(d2)).isoformat(),
-                                "name": name.strip()
-                            })
+                            data["ranges"].append({"start": datetime.date(sy, m1, int(d1)).isoformat(), "end": datetime.date(ey, m2, int(d2)).isoformat(), "name": name.strip()})
                         continue
-
-                    # Match losse dag: "Wapenstilstand: dinsdag 11 november 2025"
-                    # Of: "Pinkstermaandag: 25 mei 2026"
                     day_match = re.search(r'^(.*?):\s*.*?\b(\d+)\s+([a-z]+)\s+(\d{4})', clean_item, re.IGNORECASE)
                     if day_match:
                         name, d, m_str, y_str = day_match.groups()
                         m = maanden_dict.get(m_str.lower())
-                        if m:
-                            data["events"].append({
-                                "date": datetime.date(int(y_str), m, int(d)).isoformat(),
-                                "name": name.strip()
-                            })
-
-            with open(CACHE_FILE, 'w') as f:
-                json.dump(data, f)
-    except Exception as e:
-        print(f"Scraping error: {e}")
-        
+                        if m: data["events"].append({"date": datetime.date(int(y_str), m, int(d)).isoformat(), "name": name.strip()})
+            with open(CACHE_FILE, 'w') as f: json.dump(data, f)
+    except Exception as e: print(f"Scraping error: {e}")
     return data
 
-def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=True, show_holidays=True, show_vacations=True, is_schoolyear=False):
+def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=True, show_holidays=True, show_vacations=True, is_schoolyear=False, user_id=None):
     all_data = load_all_vlaanderen_data()
-    
-    day_events = {} # {year: {month: {day: [names]}}}
-    holiday_dates = set() # {(year, month, day)}
+    day_events = {}
+    holiday_dates = set()
     v_ranges = []
-    
     target_years = [jaar, jaar + 1] if is_schoolyear else [jaar]
     
-    # Verwerk vakantie-bereiken
     if show_vacations:
         for r in all_data["ranges"]:
             s_date = datetime.date.fromisoformat(r['start'])
             e_date = datetime.date.fromisoformat(r['end'])
-            # Alleen bereiken die overlap hebben met onze target jaren
             if s_date.year in target_years or e_date.year in target_years:
                 v_ranges.append({'start': s_date, 'end': e_date, 'name': r['name']})
 
-    # Verwerk losse feestdagen
     if show_holidays:
         for e in all_data["events"]:
             d_obj = datetime.date.fromisoformat(e['date'])
@@ -207,9 +146,10 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
                 day_events[y][m][d].append(e['name'])
                 holiday_dates.add((y, m, d))
 
-    # Verjaardagen (vallen elk jaar op dezelfde dag)
-    if show_birthdays and current_user.is_authenticated:
-        all_birthdays = Birthday.query.filter_by(user_id=current_user.id).all()
+    # Gebruik meegegeven user_id (voor tokens) of current_user
+    actual_user_id = user_id or (current_user.id if current_user.is_authenticated else None)
+    if show_birthdays and actual_user_id:
+        all_birthdays = Birthday.query.filter_by(user_id=actual_user_id).all()
         for y in target_years:
             if y not in day_events: day_events[y] = {}
             for b in all_birthdays:
@@ -245,8 +185,7 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
         ctx.select_font_face("LM Sans 10", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         ctx.set_font_size(24 if paper_size == 'A3' else 18)
         txt = f"{MONTH_NAMES[month]} {cur_year}"
-        _, _, w, _, _, _ = ctx.text_extents(txt)
-        ctx.move_to(sx + (7*cell_w_pt)/2 - w/2, sy - 10 * MM_TO_PT); ctx.show_text(txt)
+        _, _, w, _, _, _ = ctx.text_extents(txt); ctx.move_to(sx + (7*cell_w_pt)/2 - w/2, sy - 10 * MM_TO_PT); ctx.show_text(txt)
         ctx.set_font_size(14 if paper_size == 'A3' else 10)
         for i, dn in enumerate(DAY_NAMES):
             _, _, w, _, _, _ = ctx.text_extents(dn); ctx.move_to(sx + i * cell_w_pt + cell_w_pt/2 - w/2, sy - 4 * MM_TO_PT); ctx.show_text(dn)
@@ -257,75 +196,53 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
             is_holiday = show_holidays and (cur_year, cdate.month, cdate.day) in holiday_dates
             active_vacations = [r for r in v_ranges if r['start'] <= cdate <= r['end']]
             has_line = len(active_vacations) > 0 or is_holiday
-            
             if has_line:
                 ctx.set_source_rgba(0.2, 0.6, 0.8, 0.3)
                 bar_height = (8 if paper_size == 'A3' else 6)
-                ctx.rectangle(x, y, cell_w_pt, bar_height)
-                ctx.fill()
-                
+                ctx.rectangle(x, y, cell_w_pt, bar_height); ctx.fill()
                 for r in active_vacations:
                     if cdate == r['start']:
                         ctx.set_source_rgb(0,0,0); ctx.set_font_size(8 if paper_size == 'A3' else 6)
                         ctx.move_to(x + 3*MM_TO_PT, y + bar_height + 6); ctx.show_text(r['name'])
-
             ctx.set_font_size(18 if paper_size == 'A3' else 12); ctx.set_source_rgb(0,0,0) if cdate.month == month else ctx.set_source_rgb(0.6,0.6,0.6)
             dn_txt = str(cdate.day); _, yb, w, h, _, _ = ctx.text_extents(dn_txt); ctx.move_to(x + cell_w_pt - 2*MM_TO_PT - w, y + 2*MM_TO_PT - yb); ctx.show_text(dn_txt)
-            
             if col == 0:
                 ctx.set_font_size(8 if paper_size == 'A3' else 6); ctx.set_source_rgb(0.5, 0.5, 0.5)
                 wn_txt = f"W{get_week_num(cdate.year, cdate.month, cdate.day)}"; _, yb, w, h, _, _ = ctx.text_extents(wn_txt)
                 ctx.move_to(sx - w - 4*MM_TO_PT, y + 4*MM_TO_PT - yb); ctx.show_text(wn_txt)
-
             if cdate.month == month:
                 evs = day_events.get(cur_year, {}).get(cdate.month, {}).get(cdate.day, [])
                 if evs:
                     ctx.set_source_rgb(0,0,0); ctx.set_font_size(9 if paper_size == 'A3' else 7)
                     y_offset = 7*MM_TO_PT
-                    for idx, name in enumerate(evs): 
-                        ctx.move_to(x + 3*MM_TO_PT, y + y_offset + idx * (11 if paper_size == 'A3' else 8))
-                        ctx.show_text(name)
+                    for idx, name in enumerate(evs): ctx.move_to(x + 3*MM_TO_PT, y + y_offset + idx * (11 if paper_size == 'A3' else 8)); ctx.show_text(name)
         ctx.show_page()
     surface.finish(); output.seek(0)
     return output
 
-# --- Google Auth (Robuuste methode met ID Token) ---
 @app.route('/api/auth/google', methods=['POST'])
 def google_auth():
     try:
         data = request.get_json()
         token = data.get('token')
-        if not token:
-            return {"error": "Geen token ontvangen"}, 400
-        
-        # Verifieer de ID Token (geen client_secret nodig!)
+        if not token: return {"error": "Geen token ontvangen"}, 400
         idinfo = id_token.verify_oauth2_token(token, google_requests.Request(), GOOGLE_CLIENT_ID)
-        
-        # Gebruiker identificeren
-        google_id = idinfo['sub']
-        email = idinfo['email']
-        name = idinfo.get('name', email)
-
-        user = User.query.filter_by(google_id=google_id).first()
+        user = User.query.filter_by(google_id=idinfo['sub']).first()
         if not user:
-            user = User(google_id=google_id, email=email, name=name)
+            user = User(google_id=idinfo['sub'], email=idinfo['email'], name=idinfo.get('name', idinfo['email']))
             db.session.add(user); db.session.commit()
-        
-        login_user(user)
-        return {"success": True, "name": name}
-    except Exception as e:
-        return {"error": f"Google verificatie mislukt: {str(e)}"}, 401
+        login_user(user); return {"success": True, "name": user.name}
+    except Exception as e: return {"error": f"Google verificatie mislukt: {str(e)}"}, 401
 
 @app.route('/')
 def index():
     user_birthdays = Birthday.query.filter_by(user_id=current_user.id).order_by(Birthday.month, Birthday.day).all() if current_user.is_authenticated else []
-    return render_template('index.html', year=datetime.date.today().year, user_birthdays=user_birthdays)
+    # Genereer een tijdelijk token voor de preview (geldig voor 10 min)
+    preview_token = serializer.dumps(current_user.id) if current_user.is_authenticated else ""
+    return render_template('index.html', year=datetime.date.today().year, user_birthdays=user_birthdays, preview_token=preview_token)
 
 @app.route('/login')
-def login():
-    # Forceer HTTPS redirect
-    redirect_uri = url_for('authorize', _external=True, _scheme='https')
-    return google.authorize_redirect(redirect_uri)
+def login(): return google.authorize_redirect(url_for('authorize', _external=True, _scheme='https'))
 
 @app.route('/authorize')
 def authorize():
@@ -337,8 +254,7 @@ def authorize():
             user = User(google_id=user_info['sub'], email=user_info['email'], name=user_info['name'])
             db.session.add(user); db.session.commit()
         login_user(user); return redirect('/')
-    except Exception as e:
-        flash(f"Login mislukt: {e}"); return redirect('/')
+    except Exception as e: flash(f"Login mislukt: {e}"); return redirect('/')
 
 @app.route('/logout')
 def logout(): logout_user(); return redirect('/')
@@ -358,15 +274,16 @@ def delete_birthday(id):
 
 @app.route('/pdf_preview')
 def pdf_preview():
-    pdf = generate_pdf(int(request.args.get('year', 2026)), request.args.get('paper_size', 'A3'), request.args.get('orientation', 'landscape'), request.args.get('show_birthdays') == 'true', request.args.get('show_holidays') == 'true', request.args.get('show_vacations') == 'true', request.args.get('is_schoolyear') == 'true')
+    # Gebruik token voor identificatie om cookie-partitionering issues te voorkomen
+    token = request.args.get('token')
+    user_id = None
+    if token:
+        try: user_id = serializer.loads(token, max_age=600)
+        except: pass
     
+    pdf = generate_pdf(int(request.args.get('year', 2026)), request.args.get('paper_size', 'A3'), request.args.get('orientation', 'landscape'), request.args.get('show_birthdays') == 'true', request.args.get('show_holidays') == 'true', request.args.get('show_vacations') == 'true', request.args.get('is_schoolyear') == 'true', user_id=user_id)
     response = make_response(send_file(pdf, mimetype='application/pdf'))
-    # Voorkom MIME-sniffing
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['Access-Control-Allow-Origin'] = request.host_url.rstrip('/')
-    # Forceer dat de browser het als een apart document behandelt in de iframe context
     response.headers['Content-Disposition'] = 'inline; filename="preview.pdf"'
-    
     return response
 
 @app.route('/generate', methods=['POST'])
@@ -374,9 +291,5 @@ def generate():
     pdf = generate_pdf(int(request.form.get('year', 2026)), request.form.get('paper_size', 'A3'), request.form.get('orientation', 'landscape'), 'show_birthdays' in request.form, 'show_holidays' in request.form, 'show_vacations' in request.form, 'is_schoolyear' in request.form)
     return send_file(pdf, download_name=f"kalender.pdf", as_attachment=True)
 
-# Initialize database tables
-with app.app_context():
-    db.create_all()
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+with app.app_context(): db.create_all()
+if __name__ == '__main__': app.run(host='0.0.0.0', port=5000)

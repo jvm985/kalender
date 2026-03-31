@@ -223,6 +223,7 @@
                 const holidays = document.getElementById('show_holidays').checked;
                 const vacations = document.getElementById('show_vacations').checked;
                 const isSchool = document.getElementById('id_type_school').checked;
+                const token = "{{ preview_token }}";
 
                 // Update de tekstweergave IN het vakje
                 const display = document.getElementById('yearDisplay');
@@ -232,7 +233,7 @@
                     display.value = year;
                 }
 
-                const url = `/pdf_preview?year=${year}&paper_size=${size}&orientation=${orient}&show_birthdays=${bdays}&show_holidays=${holidays}&show_vacations=${vacations}&is_schoolyear=${isSchool}&t=${new Date().getTime()}`;
+                const url = `/pdf_preview?year=${year}&paper_size=${size}&orientation=${orient}&show_birthdays=${bdays}&show_holidays=${holidays}&show_vacations=${vacations}&is_schoolyear=${isSchool}&token=${token}&t=${new Date().getTime()}`;
                 previewIframe.src = url;
             }
 
