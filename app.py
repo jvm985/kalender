@@ -29,14 +29,25 @@ app.config.update(
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
 
 @app.after_request
-def add_cookie_headers(response):
+def add_headers(response):
     # Voeg 'Partitioned' toe aan Set-Cookie headers voor iframe support (CHIPS)
     cookies = response.headers.getlist('Set-Cookie')
-    response.headers.remove('Set-Cookie')
-    for cookie in cookies:
-        if 'Partitioned' not in cookie:
-            cookie += '; Partitioned'
-        response.headers.add('Set-Cookie', cookie)
+    if cookies:
+        response.headers.remove('Set-Cookie')
+        for cookie in cookies:
+            new_cookie = cookie
+            if 'Partitioned' not in cookie:
+                new_cookie += '; Partitioned'
+            # Zorg dat SameSite=None altijd aanwezig is als Partitioned gebruikt wordt
+            if 'SameSite=' not in new_cookie:
+                new_cookie += '; SameSite=None'
+            if 'Secure' not in new_cookie:
+                new_cookie += '; Secure'
+            response.headers.add('Set-Cookie', new_cookie)
+    
+    # Beveiligingsheaders voor iframes
+    response.headers['Content-Security-Policy'] = "frame-ancestors 'self';"
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
     return response
 
 # Database Setup
@@ -353,6 +364,7 @@ def pdf_preview():
     # Geef expliciet toestemming voor inbedden en voorkom MIME-sniffing
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
     response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Access-Control-Allow-Origin'] = request.host_url.rstrip('/')
     # Forceer dat de browser het als een apart document behandelt in de iframe context
     response.headers['Content-Disposition'] = 'inline; filename="preview.pdf"'
     
