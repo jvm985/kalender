@@ -28,6 +28,17 @@ app.config.update(
 # Zorg dat Flask HTTPS begrijpt achter Nginx en Docker
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
 
+@app.after_request
+def add_cookie_headers(response):
+    # Voeg 'Partitioned' toe aan Set-Cookie headers voor iframe support (CHIPS)
+    cookies = response.headers.getlist('Set-Cookie')
+    response.headers.remove('Set-Cookie')
+    for cookie in cookies:
+        if 'Partitioned' not in cookie:
+            cookie += '; Partitioned'
+        response.headers.add('Set-Cookie', cookie)
+    return response
+
 # Database Setup
 DATA_DIR = '/data'
 if not os.path.exists(DATA_DIR) or not os.access(DATA_DIR, os.W_OK):

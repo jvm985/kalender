@@ -109,6 +109,7 @@
                                 </label>
                             </div>
                             <input type="number" name="year" id="year" value="{{ year }}" min="1900" max="2100">
+                            <div id="yearDisplay" style="margin-top: 5px; font-weight: bold; color: #666; font-size: 0.9rem;"></div>
                         </div>
                         <div class="form-group">
                             <label>Papierformaat</label>
@@ -210,6 +211,14 @@
                 const holidays = document.getElementById('show_holidays').checked;
                 const vacations = document.getElementById('show_vacations').checked;
                 const isSchool = document.getElementById('type_school').checked;
+
+                // Update de tekstweergave onder het invoerveld
+                const display = document.getElementById('yearDisplay');
+                if (isSchool && year) {
+                    display.innerText = `${year} - ${parseInt(year) + 1}`;
+                } else {
+                    display.innerText = "";
+                }
 
                 const url = `/pdf_preview?year=${year}&paper_size=${size}&orientation=${orient}&show_birthdays=${bdays}&show_holidays=${holidays}&show_vacations=${vacations}&is_schoolyear=${isSchool}&t=${new Date().getTime()}`;
                 previewIframe.src = url;
