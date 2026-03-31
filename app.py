@@ -22,7 +22,7 @@ app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'kalender-secret-123')
 app.config.update(
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SAMESITE='None',  # Nodig voor cross-site context in iframes
 )
 
 # Zorg dat Flask HTTPS begrijpt achter Nginx en Docker
@@ -311,7 +311,15 @@ def delete_birthday(id):
 @app.route('/pdf_preview')
 def pdf_preview():
     pdf = generate_pdf(int(request.args.get('year', 2026)), request.args.get('paper_size', 'A3'), request.args.get('orientation', 'landscape'), request.args.get('show_birthdays') == 'true', request.args.get('show_holidays') == 'true', request.args.get('show_vacations') == 'true')
-    return send_file(pdf, mimetype='application/pdf')
+    
+    response = make_response(send_file(pdf, mimetype='application/pdf'))
+    # Geef expliciet toestemming voor inbedden en voorkom MIME-sniffing
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    # Forceer dat de browser het als een apart document behandelt in de iframe context
+    response.headers['Content-Disposition'] = 'inline; filename="preview.pdf"'
+    
+    return response
 
 @app.route('/generate', methods=['POST'])
 def generate():
