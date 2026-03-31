@@ -5,3 +5,5 @@ gunicorn
 flask-sqlalchemy
 flask-login
 authlib
+google-auth
+google-auth-httplib2

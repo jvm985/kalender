@@ -11,10 +11,19 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from authlib.integrations.flask_client import OAuth
 from werkzeug.middleware.proxy_fix import ProxyFix
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
 
 app = Flask(__name__)
 # Gebruik een vaste secret key voor sessie-persistentie na herstart
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'kalender-secret-123')
+
+# Sessie instellingen voor HTTPS en Iframe support
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+)
 
 # Zorg dat Flask HTTPS begrijpt achter Nginx en Docker
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
@@ -177,6 +186,33 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
         ctx.show_page()
     ctx.show_page(); surface.finish(); output.seek(0)
     return output
+
+# --- Google Auth (Robuuste methode met ID Token) ---
+@app.route('/api/auth/google', methods=['POST'])
+def google_auth():
+    try:
+        data = request.get_json()
+        token = data.get('token')
+        if not token:
+            return {"error": "Geen token ontvangen"}, 400
+        
+        # Verifieer de ID Token (geen client_secret nodig!)
+        idinfo = id_token.verify_oauth2_token(token, google_requests.Request(), GOOGLE_CLIENT_ID)
+        
+        # Gebruiker identificeren
+        google_id = idinfo['sub']
+        email = idinfo['email']
+        name = idinfo.get('name', email)
+
+        user = User.query.filter_by(google_id=google_id).first()
+        if not user:
+            user = User(google_id=google_id, email=email, name=name)
+            db.session.add(user); db.session.commit()
+        
+        login_user(user)
+        return {"success": True, "name": name}
+    except Exception as e:
+        return {"error": f"Google verificatie mislukt: {str(e)}"}, 401
 
 @app.route('/')
 def index():

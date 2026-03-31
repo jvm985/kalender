@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stijlvolle Kalender Generator</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📅</text></svg>">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
         :root {
             --primary: #4a90e2;
@@ -53,10 +54,42 @@
         <div class="login-box card">
             <h2>Log in om te beginnen</h2>
             <p>Personaliseer je kalender en beheer je eigen verjaardagen.</p>
-            <a href="/login" class="login-btn">
-                <img src="https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_Color_Icon.svg" width="20" style="vertical-align: middle; margin-right: 10px;">
-                Log in met Google
-            </a>
+            <div style="display: flex; justify-content: center; padding: 20px 0;">
+                <div id="g_id_onload"
+                     data-client_id="339058057860-i6ne31mqs27mqm2ulac7al9vi26pmgo1.apps.googleusercontent.com"
+                     data-context="signin"
+                     data-ux_mode="popup"
+                     data-callback="handleCredentialResponse"
+                     data-auto_prompt="false">
+                </div>
+
+                <div class="g_id_signin"
+                     data-type="standard"
+                     data-shape="pill"
+                     data-theme="outline"
+                     data-text="signin_with"
+                     data-size="large"
+                     data-logo_alignment="left">
+                </div>
+            </div>
+            <script>
+            function handleCredentialResponse(response) {
+                fetch('/api/auth/google', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: response.credential })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        window.location.reload();
+                    } else {
+                        alert(data.error || 'Login mislukt');
+                    }
+                })
+                .catch(err => alert('Fout bij verbinden met server'));
+            }
+            </script>
         </div>
     {% else %}
         <div class="main-layout">
@@ -158,5 +191,10 @@
             updatePreview();
         </script>
     {% endif %}
+    <script>
+        window.addEventListener('error', function(e) {
+            console.error('Pagina fout:', e.message, 'op', e.filename, ':', e.lineno);
+        });
+    </script>
 </body>
 </html>
