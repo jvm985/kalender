@@ -207,8 +207,10 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
             ctx.set_font_size(18 if paper_size == 'A3' else 12); ctx.set_source_rgb(0,0,0) if cdate.month == month else ctx.set_source_rgb(0.6,0.6,0.6)
             dn_txt = str(cdate.day); _, yb, w, h, _, _ = ctx.text_extents(dn_txt); ctx.move_to(x + cell_w_pt - 2*MM_TO_PT - w, y + 2*MM_TO_PT - yb); ctx.show_text(dn_txt)
             if col == 0:
-                ctx.set_font_size(8 if paper_size == 'A3' else 6); ctx.set_source_rgb(0.4,0.4,0.4) if cdate.month == month else ctx.set_source_rgb(0.6,0.6,0.6)
-                wn_txt = f"W{get_week_num(cdate.year, cdate.month, cdate.day)}"; _, yb, w, h, _, _ = ctx.text_extents(wn_txt); ctx.move_to(x + 2*MM_TO_PT, y + 2*MM_TO_PT - yb); ctx.show_text(wn_txt)
+                ctx.set_font_size(8 if paper_size == 'A3' else 6); ctx.set_source_rgb(0.5, 0.5, 0.5)
+                wn_txt = f"W{get_week_num(cdate.year, cdate.month, cdate.day)}"; _, yb, w, h, _, _ = ctx.text_extents(wn_txt)
+                # Teken links van de eerste kolom (sx)
+                ctx.move_to(sx - w - 4*MM_TO_PT, y + 4*MM_TO_PT - yb); ctx.show_text(wn_txt)
             if cdate.month == month:
                 evs = day_events.get(cdate.month, {}).get(cdate.day, [])
                 if evs:
