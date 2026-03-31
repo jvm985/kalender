@@ -20,7 +20,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'kalender-secret-123')
 serializer = URLSafeTimedSerializer(app.secret_key)
 
-# Sessie instellingen (Lax is prima voor same-site, token lost iframe issue op)
+# Sessie instellingen
 app.config.update(
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_HTTPONLY=True,
@@ -94,6 +94,7 @@ def load_all_vlaanderen_data():
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             content = r.text
+            # Stap 1: Vind alle secties per schooljaar
             sections = re.split(r'<(?:h[234]|span)[^>]*>(?:\s*Schooljaar\s*|Schoolvakanties\s*)?(\d{4}-\d{4}).*?</(?:h[234]|span)>', content, flags=re.IGNORECASE)
             for i in range(1, len(sections), 2):
                 sj_content = sections[i+1]
@@ -101,7 +102,11 @@ def load_all_vlaanderen_data():
                 for item in items:
                     clean_item = re.sub(r'<.*?>', '', item).strip()
                     if not clean_item: continue
-                    range_match = re.search(r'^(.*?):\s*van\s+.*?\b(\d+)\s+([a-z]+)?.*?\b(\d+)\s+([a-z]+)\s+(\d{4})', clean_item, re.IGNORECASE)
+                    
+                    # Verbeterde Range Regex: zoekt naar twee getallen en een jaar
+                    # Bijv: "Herfstvakantie: van 27 oktober tot en met 2 november 2025"
+                    # Of: "Hemelvaart: donderdag 14 en vrijdag 15 mei 2026"
+                    range_match = re.search(r'^(.*?):\s*(?:van\s+)?.*?\b(\d+)\s+([a-z]+)?.*?\b(\d+)\s+([a-z]+)\s+(\d{4})', clean_item, re.IGNORECASE)
                     if range_match:
                         name, d1, m1_str, d2, m2_str, ey_str = range_match.groups()
                         ey = int(ey_str)
@@ -112,11 +117,14 @@ def load_all_vlaanderen_data():
                             if m1 > m2: sy = ey - 1
                             data["ranges"].append({"start": datetime.date(sy, m1, int(d1)).isoformat(), "end": datetime.date(ey, m2, int(d2)).isoformat(), "name": name.strip()})
                         continue
+
+                    # Verbeterde Dag Regex: zoekt naar een getal, maand en jaar
                     day_match = re.search(r'^(.*?):\s*.*?\b(\d+)\s+([a-z]+)\s+(\d{4})', clean_item, re.IGNORECASE)
                     if day_match:
                         name, d, m_str, y_str = day_match.groups()
                         m = maanden_dict.get(m_str.lower())
                         if m: data["events"].append({"date": datetime.date(int(y_str), m, int(d)).isoformat(), "name": name.strip()})
+            
             with open(CACHE_FILE, 'w') as f: json.dump(data, f)
     except Exception as e: print(f"Scraping error: {e}")
     return data
@@ -146,7 +154,6 @@ def generate_pdf(jaar, paper_size='A3', orientation='landscape', show_birthdays=
                 day_events[y][m][d].append(e['name'])
                 holiday_dates.add((y, m, d))
 
-    # Gebruik meegegeven user_id (voor tokens) of current_user
     actual_user_id = user_id or (current_user.id if current_user.is_authenticated else None)
     if show_birthdays and actual_user_id:
         all_birthdays = Birthday.query.filter_by(user_id=actual_user_id).all()
@@ -237,7 +244,6 @@ def google_auth():
 @app.route('/')
 def index():
     user_birthdays = Birthday.query.filter_by(user_id=current_user.id).order_by(Birthday.month, Birthday.day).all() if current_user.is_authenticated else []
-    # Genereer een tijdelijk token voor de preview (geldig voor 10 min)
     preview_token = serializer.dumps(current_user.id) if current_user.is_authenticated else ""
     return render_template('index.html', year=datetime.date.today().year, user_birthdays=user_birthdays, preview_token=preview_token)
 
@@ -274,7 +280,6 @@ def delete_birthday(id):
 
 @app.route('/pdf_preview')
 def pdf_preview():
-    # Gebruik token voor identificatie om cookie-partitionering issues te voorkomen
     token = request.args.get('token')
     user_id = None
     if token:
