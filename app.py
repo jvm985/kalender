@@ -97,12 +97,14 @@ def load_all_vlaanderen_data():
         if r.status_code == 200:
             content = r.text
             # Secties splitsen op schooljaar koppen
-            sections = re.split(r'<(?:h[234]|span)[^>]*>(?:\s*Schooljaar\s*|Schoolvakanties\s*)?(\d{4}-\d{4}).*?</(?:h[234]|span)>', content, flags=re.IGNORECASE)
+            # Robuustere split: zoek naar jaartallen met de juiste prefix
+            split_regex = r'(?:Schooljaar|Schoolvakanties)\s*(\d{4}-\d{4})'
+            sections = re.split(split_regex, content, flags=re.IGNORECASE)
             
             seen_ranges = set()
             seen_events = set()
 
-            # De intro tekst negeren, beginnen bij de eerste match
+            # De intro tekst negeren, beginnen bij de eerste match (paren van jaar-label, content)
             for i in range(1, len(sections), 2):
                 sj_content = sections[i+1]
                 items = re.findall(r'<li>(.*?)</li>', sj_content, re.DOTALL)
