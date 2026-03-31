@@ -143,18 +143,41 @@
                         <input type="number" name="month" placeholder="Maand" min="1" max="12" required style="flex: 1;">
                         <button type="submit" style="width: auto; padding: 8px 12px;">+</button>
                     </form>
+
+                    <!-- Zoekfilter -->
+                    <div style="margin-bottom: 10px;">
+                        <input type="text" id="birthdayFilter" placeholder="🔍 Zoek op naam of datum..." style="padding: 8px; font-size: 0.85rem; border: 1px solid #eee; background: #fcfcfc;">
+                    </div>
                     
-                    <ul class="birthday-list">
-                        {% for b in user_birthdays %}
-                            <li class="birthday-item">
-                                <span><strong>{{ b.day }}/{{ b.month }}</strong> {{ b.name }}</span>
-                                <a href="/birthday/delete/{{ b.id }}"><button class="btn-delete">X</button></a>
-                            </li>
-                        {% else %}
-                            <li style="text-align: center; color: #999; padding: 10px;">Geen verjaardagen.</li>
-                        {% endfor %}
-                    </ul>
+                    <div style="max-height: 400px; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; padding: 0 10px; background: #fafafa;">
+                        <ul class="birthday-list" id="birthdayList">
+                            {% for b in user_birthdays %}
+                                <li class="birthday-item" data-search="{{ b.name|lower }} {{ b.day }}/{{ b.month }}">
+                                    <span><strong>{{ b.day }}/{{ b.month }}</strong> {{ b.name }}</span>
+                                    <a href="/birthday/delete/{{ b.id }}"><button class="btn-delete">X</button></a>
+                                </li>
+                            {% else %}
+                                <li style="text-align: center; color: #999; padding: 10px;">Geen verjaardagen.</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
                 </div>
+
+                <script>
+                    document.getElementById('birthdayFilter').addEventListener('input', function(e) {
+                        const filter = e.target.value.toLowerCase();
+                        const items = document.querySelectorAll('#birthdayList .birthday-item');
+                        
+                        items.forEach(item => {
+                            const text = item.getAttribute('data-search');
+                            if (text.includes(filter)) {
+                                item.style.display = 'flex';
+                            } else {
+                                item.style.display = 'none';
+                            }
+                        });
+                    });
+                </script>
             </div>
 
             <!-- PDF Preview -->
