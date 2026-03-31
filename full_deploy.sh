@@ -30,36 +30,9 @@ ssh $SERVER << EOF
         git clone $REPO .
     fi
     
-    git fetch origin
-    git reset --hard origin/master
-
-    # Docker image bouwen en container herstarten
-    sudo docker build -t $APP_NAME .
-    sudo docker stop $APP_NAME || true
-    sudo docker rm $APP_NAME || true
-    
-    # Run container op poort 5050 met volume voor DB
-    sudo docker run -d \
-        --name $APP_NAME \
-        --restart always \
-        -p $APP_PORT:5000 \
-        -v kalender_data:/data \
-        -e GOOGLE_CLIENT_SECRET="PLAATS_HIER_JE_SECRET" \
-        $APP_NAME
-
-    # Nginx configuratie instellen
-    sudo cp kalender.irishof.cloud.conf /etc/nginx/sites-available/kalender.irishof.cloud
-    sudo ln -sf /etc/nginx/sites-available/kalender.irishof.cloud /etc/nginx/sites-enabled/kalender.irishof.cloud
-    
-    # Nginx testen en herladen
-    sudo nginx -t && sudo systemctl reload nginx
-
-    # Let's Encrypt SSL aanvragen (indien nog niet aanwezig)
-    if [ ! -d "/etc/letsencrypt/live/kalender.irishof.cloud" ]; then
-        echo "--- Aanvragen van SSL certificaat via Let's Encrypt ---"
-        sudo apt-get update && sudo apt-get install -y certbot python3-certbot-nginx
-        sudo certbot --nginx -d kalender.irishof.cloud --non-interactive --agree-tos -m jvm985@gmail.com --redirect
-    fi
+    # Gebruik het snelle deploy script
+    chmod +x deploy.sh
+    ./deploy.sh
 
     echo "Deployment voltooid op $SERVER"
     echo "App draait op https://kalender.irishof.cloud"
