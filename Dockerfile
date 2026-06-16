@@ -22,5 +22,11 @@ COPY . .
 # Expose port 5000
 EXPOSE 5000
 
+# Draai als niet-root (security-hardening). uid 1001 = de host-eigenaar van de
+# ge-bind-mounte ./data (SQLite-DB + cache), zodat schrijven blijft werken
+# zonder de host-ownership te wijzigen.
+RUN useradd -u 1001 -m appuser
+USER appuser
+
 # Start with Gunicorn
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
